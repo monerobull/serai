@@ -20,7 +20,12 @@ pub const DAY: Duration = HOUR.checked_mul(24).unwrap();
 pub const WEEK: Duration = DAY.checked_mul(7).unwrap();
 
 /// The intended duration for a session.
-pub const SESSION_LENGTH: Duration = WEEK;
+///
+/// Testing only (the `testnet` feature): thirty days on a test network, so it's started again before
+/// its first rotation of an external network's keys, which it doesn't exercise. Without the
+/// feature, a week.
+pub const SESSION_LENGTH: Duration =
+  if cfg!(feature = "testnet") { DAY.checked_mul(30).unwrap() } else { WEEK };
 /// The intended duration for a session, represented in the amount of block proposal slots.
 pub const SESSION_LENGTH_IN_SLOTS: u64 = SESSION_LENGTH.as_secs() / TARGET_BLOCK_TIME.as_secs();
 
@@ -39,13 +44,18 @@ fn constants() {
   assert_eq!(DAY, Duration::from_secs(24 * 60 * 60));
   assert_eq!(WEEK, Duration::from_secs(7 * 24 * 60 * 60));
 
-  assert_eq!(SESSION_LENGTH, WEEK);
-
   assert_eq!(
     SESSION_LENGTH_IN_SLOTS,
     u64::try_from(SESSION_LENGTH.as_nanos() / TARGET_BLOCK_TIME.as_nanos()).unwrap()
   );
-  assert_eq!(SESSION_LENGTH_IN_SLOTS, (7 * 24 * 60 * 60) / 6);
+  if cfg!(feature = "testnet") {
+    // Testing only: a test network's session, thirty days
+    assert_eq!(SESSION_LENGTH, Duration::from_secs(30 * 24 * 60 * 60));
+    assert_eq!(SESSION_LENGTH_IN_SLOTS, (30 * 24 * 60 * 60) / 6);
+  } else {
+    assert_eq!(SESSION_LENGTH, WEEK);
+    assert_eq!(SESSION_LENGTH_IN_SLOTS, (7 * 24 * 60 * 60) / 6);
+  }
 
   assert_eq!(RETIREMENT_LOCK_IN_DURATION_IN_SLOTS, (4 * 7 * 24 * 60 * 60) / 6);
 }

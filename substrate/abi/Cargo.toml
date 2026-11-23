@@ -52,4 +52,6 @@ std = [
 ]
 substrate = ["dep:scale", "dep:sp-runtime", "dep:frame-support", "dep:frame-system", "serai-primitives/scale"]
 try-runtime = ["sp-runtime/try-runtime"]
+# Testing only: a test network's primitives (`serai-primitives`' `testnet`). Without it, upstream's.
+testnet = ["serai-primitives/testnet"]
 default = ["std"]

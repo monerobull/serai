@@ -180,6 +180,7 @@ runtime-benchmarks = [
 testnet = [
   "serai-genesis-liquidity-pallet/testnet",
   "serai-economic-security-pallet/testnet",
+  "serai-abi?/testnet",
 ]
 
 default = ["std"]

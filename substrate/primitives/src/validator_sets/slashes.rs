@@ -221,6 +221,11 @@ fn serialize() {
   }
 }
 
+// Testing only: this test's figures are for upstream's week-long session (twelve hours of
+// penalty-free downtime of a 168-hour session). Under the `testnet` feature a session is thirty
+// days, so the same points cost proportionately less, and the test runs without the feature only.
+// `penalty` has no caller outside its tests.
+#[cfg(not(feature = "testnet"))]
 #[test]
 fn test_penalty() {
   for validators in [1, 50, 100, KeyShares::MAX_PER_SET] {
