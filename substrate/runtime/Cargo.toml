@@ -175,4 +175,11 @@ runtime-benchmarks = [
   "serai-in-instructions-pallet/runtime-benchmarks",
 ]
 
+# Testing only: a network for testing, never Serai's mainnet or public testnet. Without it, this
+# is upstream's code. What it changes is listed where each change is made.
+testnet = [
+  "serai-genesis-liquidity-pallet/testnet",
+  "serai-economic-security-pallet/testnet",
+]
+
 default = ["std"]

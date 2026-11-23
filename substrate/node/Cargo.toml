@@ -83,6 +83,9 @@ sc-utils = { git = "https://github.com/serai-dex/patch-polkadot-sdk", default-fe
 serai-env = { path = "../../secret-store/env" }
 
 [features]
+# Testing only: a node whose runtime is a test network's (`serai-runtime`'s `testnet`). Without it,
+# this is upstream's node.
+testnet = ["serai-runtime/testnet"]
 runtime-benchmarks = [
   "frame-benchmarking/runtime-benchmarks",
 

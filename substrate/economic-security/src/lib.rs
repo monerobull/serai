@@ -500,6 +500,15 @@ mod pallet {
   pub struct CoinsInstanceAllowMint<T: Config>(PhantomData<T>);
   impl<T: Config> serai_coins_pallet::AllowMint for CoinsInstanceAllowMint<T> {
     fn is_allowed(balance: &Balance) -> bool {
+      /*
+        Testing only (the `testnet` feature): every mint is allowed. A test network's validators
+        can't achieve economic security before a rotation, which leaves adding liquidity refused
+        to every user until then. This never applies without the feature.
+      */
+      if cfg!(feature = "testnet") {
+        return true;
+      }
+
       match balance.coin.network() {
         NetworkId::Serai => {}
         NetworkId::External(network) => {
@@ -540,6 +549,11 @@ mod pallet {
   pub struct LiquidityTokensInstanceAllowMint<T: Config>(PhantomData<T>);
   impl<T: Config> serai_coins_pallet::AllowMint for LiquidityTokensInstanceAllowMint<T> {
     fn is_allowed(balance: &Balance) -> bool {
+      // Testing only (the `testnet` feature): every mint is allowed, as for coins above
+      if cfg!(feature = "testnet") {
+        return true;
+      }
+
       match balance.coin {
         Coin::Serai => unreachable!("there is no SRI liquidity token"),
         Coin::External(external_coin) => {

@@ -341,6 +341,7 @@ mod pallet {
         let monero_sri = sri_for_coin(monero)?;
 
         // Finally, we actually instantiate all of the pools
+        let mut minted = 0u128;
         for (external_coin, sri) in [
           (ExternalCoin::Bitcoin, btc_sri),
           (ExternalCoin::Ether, ether_sri),
@@ -350,6 +351,7 @@ mod pallet {
           let our_address = serai_abi::genesis_liquidity::address(external_coin);
           let sri = Amount(u64::try_from(sri).map_err(|_| serai_dex_pallet::Error::<T>::Overflow)?);
           Coins::<T>::mint(our_address, Balance { coin: Coin::Serai, amount: sri })?;
+          minted = minted.saturating_add(u128::from(sri.0));
           let external_coin_amount =
             GenesisLiquidityTokens::<T>::supply(Coin::External(external_coin));
           /*
@@ -366,7 +368,16 @@ mod pallet {
             external_coin_amount,
           )?;
         }
-        assert!(u128::from(Coins::<T>::supply(Coin::Serai).0) <= sri);
+        if cfg!(feature = "testnet") {
+          /*
+            Testing only (the `testnet` feature): a test network's chain spec endows accounts with
+            SRI for fees, so all SRI in existence exceeds `GENESIS_SRI` here. What genesis
+            liquidity itself minted is held to it instead.
+          */
+          assert!(minted <= sri);
+        } else {
+          assert!(u128::from(Coins::<T>::supply(Coin::Serai).0) <= sri);
+        }
       }
 
       // Initialize the validator sets

@@ -640,6 +640,9 @@ which will build the WASM as part of its build process, with the necessary confi
     write!(features_flag, "try-runtime,").unwrap();
     #[cfg(feature = "runtime-benchmarks")]
     write!(features_flag, "runtime-benchmarks,").unwrap();
+    // Testing only: a test network's runtime (see the `testnet` feature in `Cargo.toml`)
+    #[cfg(feature = "testnet")]
+    write!(features_flag, "testnet,").unwrap();
     features_flag
   };
 
