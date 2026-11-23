@@ -12,8 +12,11 @@ pub fn serai(
   network: Network,
   serai_key: &Zeroizing<<Ristretto as WrappedGroup>::F>,
 ) {
+  // Testing only: the dev network's node, which a FerrySwap testnet runs, is built with the
+  // `testnet` feature (mints always allowed). The testnet network's isn't.
+  let features = if network == Network::Dev { "testnet" } else { "" };
   let setup = mimalloc(Os::Debian, network.release()) +
-    &build_serai_service("", Os::Debian, network.release(), "", "serai-node");
+    &build_serai_service("", Os::Debian, network.release(), features, "serai-node");
 
   let env_vars = [("KEY", hex::encode(serai_key.to_repr()))];
   let mut env_vars_str = String::new();
