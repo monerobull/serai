@@ -451,6 +451,10 @@ fn main() {
     logger.with_colors(std::io::IsTerminal::is_terminal(&std::io::stdout()));
     logger.init().expect("failed to initialize logger");
   }
+  // Testing only: a node built with the `testnet` feature runs a runtime that always allows mints
+  #[cfg(feature = "testnet")]
+  sp_tracing::warn!("built with the testnet feature: mints are always allowed. Testing only.");
+
 
   let mut task_manager = runtime.block_on(async move {
     assert_eq!(
