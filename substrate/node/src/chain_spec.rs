@@ -192,23 +192,52 @@ pub(super) fn solo_config(env: Option<&Environment>) -> ChainSpec {
   )
 }
 
+/// Testing only (the `testnet` feature): the test network's own account, endowed beside the
+/// development accounts, read from `SERAI_TEST_ACCOUNT` as a Serai address.
+///
+/// The development accounts' keys are public, so on a network others use, anyone could spend what
+/// they hold. A node built with the feature refuses to start without this account, with one that
+/// isn't a Serai address, or with one of the development accounts.
+#[cfg(feature = "testnet")]
+fn testnet_account(development: &[SeraiAddress]) -> SeraiAddress {
+  let account = std::env::var("SERAI_TEST_ACCOUNT").unwrap_or_else(|_| {
+    panic!(
+      "built with the testnet feature: set SERAI_TEST_ACCOUNT to the test network's own Serai \
+       address"
+    )
+  });
+  let address: SeraiAddress = account
+    .parse()
+    .unwrap_or_else(|e| panic!("SERAI_TEST_ACCOUNT isn't a Serai address ({e:?}): {account}"));
+  assert!(
+    !development.contains(&address),
+    "SERAI_TEST_ACCOUNT is a development account, whose key is public: {account}"
+  );
+  address
+}
+
 pub(super) fn local_config(env: Option<&Environment>) -> ChainSpec {
+  #[cfg_attr(not(feature = "testnet"), expect(unused_mut))]
+  let mut endowed = vec![
+    insecure_account_from_name("Alice"),
+    insecure_account_from_name("Bob"),
+    insecure_account_from_name("Charlie"),
+    insecure_account_from_name("Dave"),
+    insecure_account_from_name("Eve"),
+  ];
+  // Testing only: the test network's own account, beside the development accounts
+  #[cfg(feature = "testnet")]
+  {
+    let account = testnet_account(&endowed);
+    endowed.push(account);
+  }
   genesis(
     env,
     "Local Test Network",
     "local",
     ChainType::Local,
     "serai-local",
-    &devnet_genesis(
-      &["Alice", "Bob", "Charlie", "Dave"],
-      vec![
-        insecure_account_from_name("Alice"),
-        insecure_account_from_name("Bob"),
-        insecure_account_from_name("Charlie"),
-        insecure_account_from_name("Dave"),
-        insecure_account_from_name("Eve"),
-      ],
-    ),
+    &devnet_genesis(&["Alice", "Bob", "Charlie", "Dave"], endowed),
   )
 }
 
