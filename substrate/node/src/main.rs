@@ -342,6 +342,10 @@ fn main() {
   // TODO: Allow setting this over the CLI
   let rpc_port = 9944;
 
+  // Testing only: whether the chain spec endows the test network's own account (`local_config`)
+  #[cfg(feature = "testnet")]
+  let endows_test_account = matches!(network, Network::Local);
+
   let config = Configuration {
     tokio_handle: runtime.handle().clone(),
 
@@ -454,6 +458,16 @@ fn main() {
   // Testing only: a node built with the `testnet` feature runs a runtime that always allows mints
   #[cfg(feature = "testnet")]
   sp_tracing::warn!("built with the testnet feature: mints are always allowed. Testing only.");
+  // Testing only: the account the chain spec endowed, read and checked as it was made
+  // (`chain_spec::testnet_account`), so the logs of a network's nodes show they agree on it, as
+  // two that don't build two genesis blocks and never finalize
+  #[cfg(feature = "testnet")]
+  if endows_test_account {
+    sp_tracing::warn!(
+      "the test network's own account, endowed at genesis: {}",
+      std::env::var("SERAI_TEST_ACCOUNT").unwrap_or_default()
+    );
+  }
 
 
   let mut task_manager = runtime.block_on(async move {
