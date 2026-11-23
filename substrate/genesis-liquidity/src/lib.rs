@@ -85,8 +85,13 @@ mod pallet {
 
   // These are from `specs/Economics.md`
   pub(crate) const GENESIS_SRI: Amount = Amount(100_000_000 * 10u64.pow(Coin::Serai.decimals()));
-  pub(crate) const GENESIS_LIQUIDITY_TIME: Duration =
-    serai_abi::primitives::constants::DAY.checked_mul(30).unwrap();
+  pub(crate) const GENESIS_LIQUIDITY_TIME: Duration = if cfg!(feature = "testnet") {
+    // Testing only (the `testnet` feature): a test network's genesis period is five hours, so it
+    // can be run through in an evening
+    serai_abi::primitives::constants::HOUR.checked_mul(5).unwrap()
+  } else {
+    serai_abi::primitives::constants::DAY.checked_mul(30).unwrap()
+  };
   pub(crate) const GENESIS_TRICKLE_FEED: u128 =
     serai_abi::primitives::constants::DAY.checked_mul(180).unwrap().as_millis();
 
