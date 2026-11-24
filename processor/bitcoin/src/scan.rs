@@ -33,6 +33,9 @@ pub(crate) static OFFSETS: LazyLock<HashMap<OutputType, <Secp256k1 as WrappedGro
 pub(crate) fn scanner(key: <Secp256k1 as WrappedGroup>::G) -> Scanner {
   let mut scanner = Scanner::new(key).unwrap();
   for offset in OFFSETS.values() {
+    if *offset == <Secp256k1 as WrappedGroup>::F::ZERO {
+      continue;
+    }
     let () = scanner.register_offset(*offset).unwrap();
   }
   scanner
@@ -98,4 +101,38 @@ pub(crate) fn extract_serai_data(tx: &Transaction) -> Vec<u8> {
   }
 
   data.unwrap_or(vec![])
+}
+
+#[cfg(test)]
+mod tests {
+  use bitcoin_serai::{
+    bitcoin::{Amount, TxOut, absolute::LockTime, transaction::Version},
+    wallet::address,
+  };
+
+  use super::*;
+
+  #[test]
+  fn scanner_registers_all_offsets_without_panicking() {
+    let key = Secp256k1::generator();
+    let scanner = scanner(key);
+
+    let expected_offsets = OFFSETS.values().copied().collect::<Vec<_>>();
+    let tx = Transaction {
+      version: Version(2),
+      lock_time: LockTime::ZERO,
+      input: vec![],
+      output: expected_offsets
+        .iter()
+        .map(|offset| TxOut {
+          value: Amount::from_sat(10_000),
+          script_pubkey: address(key + (Secp256k1::generator() * *offset)).unwrap(),
+        })
+        .collect(),
+    };
+
+    let found =
+      scanner.scan_transaction(&tx).into_iter().map(|output| output.offset()).collect::<Vec<_>>();
+    assert_eq!(found, expected_offsets);
+  }
 }
