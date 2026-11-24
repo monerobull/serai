@@ -141,7 +141,12 @@ fn genesis(
   protocol_id: &'static str,
   config: &GenesisConfig,
 ) -> ChainSpec {
-  let bin = wasm_binary(env, matches!(chain_type, ChainType::Development));
+  // Testing only (the `testnet` feature): a `Local` network, the full-stack harness's four
+  // validators, may run the runtime built into the node too, as nothing gives it
+  // `/runtime/serai.wasm`. Without the feature, only a `Development` network may, as upstream's.
+  let builtin_allowed = matches!(chain_type, ChainType::Development) ||
+    (cfg!(feature = "testnet") && matches!(chain_type, ChainType::Local));
+  let bin = wasm_binary(env, builtin_allowed);
   let hash = sp_crypto_hashing::blake2_256(&bin).to_vec();
 
   let mut chain_spec = ChainSpecBuilder::new(&bin, None)
