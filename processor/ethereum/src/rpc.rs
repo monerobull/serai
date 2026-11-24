@@ -128,9 +128,11 @@ impl<D: 'static + Send + Sync + Db> ScannerFeed for Rpc<D> {
         ))?;
       }
 
+      // `number` is an epoch's number. The time of an epoch is the time of its last block
+      let end_block = (number * 32) + 31;
       let header = self
         .provider
-        .get_block(BlockNumberOrTag::Number(number).into())
+        .get_block(BlockNumberOrTag::Number(end_block).into())
         .await?
         .ok_or_else(|| {
           TransportErrorKind::Custom(
