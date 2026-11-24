@@ -365,6 +365,7 @@ async fn main() {
       prune_tributary_db(&env, to_cleanup);
       // Remove the keys to confirm for this network
       KeysToConfirm::take(&mut txn, to_cleanup);
+      PreprocessedFirstDkgConfirmation::take(&mut txn, to_cleanup);
       KeySet::take(&mut txn, to_cleanup);
       // Drain the cosign intents created for this set
       while !Cosigning::<Db>::intended_cosigns(&mut txn, to_cleanup).is_empty() {}

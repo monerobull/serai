@@ -81,6 +81,8 @@ serai_db::schema! {
     ErroneousCosigns: () -> Vec<SignedCosign>,
     // The keys to confirm and set on the Serai network
     KeysToConfirm: (set: ExternalValidatorSet) -> KeyPair,
+    // We published our preprocess for the first attempt at confirming these keys
+    PreprocessedFirstDkgConfirmation: (set: ExternalValidatorSet) -> (),
     // The key was set on the Serai network
     KeySet: (set: ExternalValidatorSet) -> (),
   }

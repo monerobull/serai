@@ -19,7 +19,9 @@ use serai_task::{DoesNotError, ContinuallyRan};
 use serai_coordinator_substrate::{NewSetInformation, Keys};
 use serai_coordinator_tributary::{Transaction, DkgConfirmationMessages};
 
-use crate::{KeysToConfirm, KeySet, TributaryTransactionsFromDkgConfirmation};
+use crate::{
+  KeysToConfirm, PreprocessedFirstDkgConfirmation, KeySet, TributaryTransactionsFromDkgConfirmation,
+};
 
 fn schnorrkel() -> Schnorrkel {
   Schnorrkel::new(b"substrate") // TODO: Pull the constant for this
@@ -182,6 +184,14 @@ impl<
       set,
       &Transaction::DkgConfirmationPreprocess { attempt, preprocess, signed: Default::default() },
     );
+    /*
+      A second preprocess for the same attempt would have fresh nonces, and the Tributary rejects
+      it as conflicting with the one already on-chain. Accordingly, we only ever make our first
+      attempt's preprocess once, even across reboots, and later attempts come from `Reattempt`.
+    */
+    if attempt == 0 {
+      PreprocessedFirstDkgConfirmation::set(&mut txn, set, &());
+    }
     txn.commit();
 
     *signer = Some(Signer::Preprocess { attempt, seed, preprocess });
@@ -200,7 +210,15 @@ impl<
       let mut made_progress = false;
 
       // If we were sent a key to set, create the signer for it
-      if self.signer.is_none() && KeysToConfirm::get(&self.db, self.set.set).is_some() {
+      /*
+        Our signer is also `None` once it's consumed (by completing the signature, or by a set of
+        preprocesses not consistent with ours), while the keys to confirm remain until Serai has
+        them set. We don't make a new preprocess for the first attempt then.
+      */
+      if self.signer.is_none() &&
+        KeysToConfirm::get(&self.db, self.set.set).is_some() &&
+        PreprocessedFirstDkgConfirmation::get(&self.db, self.set.set).is_none()
+      {
         // Create and publish the initial preprocess
         Self::preprocess(&mut self.db, self.set.set, 0, self.key.clone(), &mut self.signer);
 
@@ -485,9 +503,70 @@ impl<
 
 #[cfg(test)]
 mod tests {
-  use serai_client_serai::abi::primitives::{network_id::ExternalNetworkId, validator_sets::Session};
+  use serai_db::MemDb;
+
+  use serai_client_serai::abi::primitives::{
+    crypto::{Public, ExternalKey, KeyPair},
+    network_id::ExternalNetworkId,
+    validator_sets::Session,
+  };
 
   use super::*;
+
+  fn preprocesses_published(db: &mut MemDb, set: ExternalValidatorSet) -> usize {
+    let mut txn = db.txn();
+    let mut published = 0;
+    while let Some(tx) = TributaryTransactionsFromDkgConfirmation::try_recv(&mut txn, set) {
+      assert!(matches!(tx, Transaction::DkgConfirmationPreprocess { attempt: 0, .. }));
+      published += 1;
+    }
+    txn.commit();
+    published
+  }
+
+  #[tokio::test]
+  async fn first_attempt_is_preprocessed_once() {
+    let set = ExternalValidatorSet { network: ExternalNetworkId::Bitcoin, session: Session(0) };
+    let key = Zeroizing::new(<Ristretto as WrappedGroup>::F::random(&mut OsRng));
+    let validator = SeraiAddress((Ristretto::generator() * key.deref()).to_bytes());
+
+    let mut db = MemDb::new();
+    {
+      let mut txn = db.txn();
+      KeysToConfirm::set(
+        &mut txn,
+        set,
+        &KeyPair(Public([0; 32]), ExternalKey(vec![0; 33].try_into().unwrap())),
+      );
+      txn.commit();
+    }
+
+    let new_set = || NewSetInformation {
+      set,
+      serai_block: [0; 32],
+      serai_block_time: 0,
+      threshold: 1,
+      validators: vec![(validator, 1)],
+      evrf_public_keys: vec![],
+      participant_indexes: HashMap::new(),
+      participant_indexes_reverse_lookup: HashMap::new(),
+    };
+    let mut task = ConfirmDkgTask::new(db.clone(), new_set(), MemDb::new(), key.clone());
+
+    assert!(task.run_iteration().await.unwrap());
+    assert_eq!(preprocesses_published(&mut db, set), 1);
+
+    // Once our signer is consumed, as it is after completing the signature, and while the keys
+    // remain to be set on Serai, we don't make a second preprocess for the first attempt
+    task.signer = None;
+    task.run_iteration().await.unwrap();
+    assert_eq!(preprocesses_published(&mut db, set), 0);
+
+    // Nor do we after rebooting
+    let mut task = ConfirmDkgTask::new(db.clone(), new_set(), MemDb::new(), key);
+    task.run_iteration().await.unwrap();
+    assert_eq!(preprocesses_published(&mut db, set), 0);
+  }
 
   #[test]
   fn our_i_returns_none_when_outside_quorum() {
