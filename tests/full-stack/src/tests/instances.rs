@@ -152,16 +152,18 @@ pub fn processor_instance(
   let image = format!("{network_str}-processor");
   serai_docker_tests::build(image.clone());
 
-  let mut res = vec![TestBodySpecification::with_image(
-    Image::with_repository(format!("serai-dev-{image}")).pull_policy(PullPolicy::Never),
-  )
-  .replace_env(
-    [(
-      "RUST_LOG".to_owned(),
-      "info,serai_processor=trace,serai_processor_key_gen=trace,messages=trace".to_owned(),
-    )]
-    .into(),
-  )];
+  let mut res = vec![
+    TestBodySpecification::with_image(
+      Image::with_repository(format!("serai-dev-{image}")).pull_policy(PullPolicy::Never),
+    )
+    .replace_env(
+      [(
+        "RUST_LOG".to_owned(),
+        "info,serai_processor=trace,serai_processor_key_gen=trace,messages=trace".to_owned(),
+      )]
+      .into(),
+    ),
+  ];
   // the processor's keys are genesis's for this validator (`chain_spec.rs`), from its name
   let variables = vec![
     ("MESSAGE_QUEUE_KEY".to_owned(), hex::encode(message_queue_key.to_repr())),

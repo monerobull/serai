@@ -22,6 +22,9 @@ pub fn processor(
   // whose only features are its database's: `serai-processor`, with a feature per coin, is gone
   // from the workspace (a FerrySwap testnet's dry build, issue #213)
   let package = format!("serai-{coin}-processor");
+  // the `RUN cp …` line is a line of the image's own text, kept as one, past the width rustfmt
+  // can format
+  #[rustfmt::skip]
   let setup = mimalloc(Os::Debian, network.release()) +
     &build_serai_service(
       if coin == "ethereum" {

@@ -70,9 +70,10 @@ async fn ask<T, E: core::fmt::Debug, F: core::future::Future<Output = Result<T, 
 /// Whether genesis completed, asked until the node answers.
 #[expect(closure_returning_async_block)]
 async fn genesis_completed(serai: &Serai) -> bool {
-  ask("whether genesis completed", move || async move {
-    serai.state().await?.genesis_completed().await
-  })
+  ask(
+    "whether genesis completed",
+    move || async move { serai.state().await?.genesis_completed().await },
+  )
   .await
 }
 
@@ -165,10 +166,10 @@ fn musig_sign(set: ValidatorSet, pairs: &[Pair], msg: &[u8]) -> RistrettoSignatu
   let machines =
     frost::tests::algorithm_machines(&mut OsRng, &Schnorrkel::new(b"substrate"), &musig_keys);
   let sig = frost::tests::sign_without_caching(&mut OsRng, machines, msg);
-  assert!(sp_core::sr25519::Public::from(
-    musig_keys.values().next().unwrap().group_key().to_bytes()
-  )
-  .verify(&msg, &sig.to_bytes().into()));
+  assert!(
+    sp_core::sr25519::Public::from(musig_keys.values().next().unwrap().group_key().to_bytes())
+      .verify(&msg, &sig.to_bytes().into())
+  );
 
   sig.into()
 }
@@ -296,8 +297,7 @@ pub(crate) async fn complete_genesis(serai: &Serai) {
 #[ignore = "hand tool: connects to a running Serai node"]
 async fn publish_opening() {
   #[expect(clippy::disallowed_methods)]
-  let url =
-    std::env::var("SERAI_RPC_URL").unwrap_or_else(|_| "http://127.0.0.1:9944".to_owned());
+  let url = std::env::var("SERAI_RPC_URL").unwrap_or_else(|_| "http://127.0.0.1:9944".to_owned());
   let serai = Serai::new(url).expect("couldn't make a client of Serai's node");
   complete_genesis(&serai).await;
 }

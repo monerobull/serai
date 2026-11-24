@@ -468,7 +468,6 @@ fn main() {
     sp_tracing::warn!("the test network's own account, endowed at genesis: {account}");
   }
 
-
   let mut task_manager = runtime.block_on(async move {
     assert_eq!(
       validator_identity_and_keystore.is_some(),

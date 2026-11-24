@@ -12,6 +12,9 @@ pub fn secret_store(orchestration_path: &Path, network: Network) {
   let setup = mimalloc(Os::Alpine, network.release()) +
     &build_serai_service("", Os::Alpine, network.release(), "", "serai-secret-store");
 
+  // the `CMD` is one shell command, and a line of the image's own text: kept as one line, past
+  // the width rustfmt can format
+  #[rustfmt::skip]
   let run_secret_store = r#"
 # Copy the Secret Store binary and relevant license
 COPY --from=builder --chown=secretstore /serai/bin/serai-secret-store /bin
