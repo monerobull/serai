@@ -4,6 +4,7 @@
 
 use core::{ops::Deref as _, str::FromStr as _, fmt::Write as _, time::Duration};
 use std::{
+  collections::HashMap,
   fs,
   net::{ToSocketAddrs as _, TcpStream},
   thread::sleep,
@@ -78,16 +79,18 @@ fn all_variables<'a>(
     .chain(env_variables(service).map(|(key, var)| (key, Zeroizing::new(var))))
 }
 
+/// Send `service` its environment, or say why it wasn't sent: the reason names the service's
+/// host and what failed, never a variable's value.
 fn distribute_to_service(
   context: &[(String, String)],
   secrets: &[(String, Zeroizing<String>)],
   service: &str,
-) {
-  let Ok(mut socket) = EncryptedSocket::new({
+) -> Result<(), String> {
+  let mut socket = EncryptedSocket::new({
     let hostname = {
       #[expect(clippy::disallowed_methods)]
       let Ok(mut hostname) = env::var(service) else {
-        return;
+        return Err(format!("`{service}` names no host"));
       };
       assert!(!hostname.contains(':'), "`hostname` specification should omit the port");
       write!(&mut hostname, ":{PORT}").unwrap();
@@ -95,41 +98,48 @@ fn distribute_to_service(
     };
 
     let socket_addr = {
-      let Ok(socket_addr) = hostname.to_socket_addrs() else { return };
+      let socket_addr =
+        hostname.to_socket_addrs().map_err(|e| format!("`{hostname}` didn't resolve ({e})"))?;
       let mut socket_addr = socket_addr.collect::<Vec<_>>();
       if socket_addr.len() != 1 {
-        return;
+        return Err(format!("`{hostname}` resolved to {} addresses, not one", socket_addr.len()));
       }
       socket_addr.pop().unwrap()
     };
 
     let connection_timeout = connection_timeout();
-    let Ok(socket) = TcpStream::connect_timeout(&socket_addr, connection_timeout) else { return };
+    let socket = TcpStream::connect_timeout(&socket_addr, connection_timeout)
+      .map_err(|e| format!("couldn't connect to `{hostname}` ({socket_addr}): {e}"))?;
     // Leave Nagle's algorithm enabled
-    let Ok(()) = socket.set_nodelay(false) else { return };
+    socket.set_nodelay(false).map_err(|e| format!("couldn't set up `{hostname}`'s socket: {e}"))?;
     // We want blocking sockets
-    let Ok(()) = socket.set_nonblocking(false) else { return };
+    socket
+      .set_nonblocking(false)
+      .map_err(|e| format!("couldn't set up `{hostname}`'s socket: {e}"))?;
     socket.set_read_timeout(Some(connection_timeout)).expect("connection timeout is non-zero");
     socket.set_write_timeout(Some(connection_timeout)).expect("connection timeout is non-zero");
     socket
-  }) else {
-    return;
-  };
+  })
+  .map_err(|e| format!("the encrypted handshake with `{service}`'s host failed: {e}"))?;
 
+  let sent = |result: std::io::Result<()>| {
+    result.map_err(|e| format!("sending to `{service}`'s host failed partway: {e}"))
+  };
   #[expect(clippy::byte_char_slices)]
   {
     for (key, var) in all_variables(context, secrets, service) {
       let mut key = key.into_bytes();
       let mut var = Zeroizing::new(var.deref().clone().into_bytes());
-      let Ok(()) = socket.write_all(&mut [b'"']) else { return };
-      let Ok(()) = socket.write_all(key.as_mut_slice()) else { return };
-      let Ok(()) = socket.write_all(&mut [b'"']) else { return };
-      let Ok(()) = socket.write_all(&mut [b'=']) else { return };
-      let Ok(()) = socket.write_all(&mut [b'"']) else { return };
-      let Ok(()) = socket.write_all(var.as_mut_slice()) else { return };
-      let Ok(()) = socket.write_all(&mut [b'"']) else { return };
+      sent(socket.write_all(&mut [b'"']))?;
+      sent(socket.write_all(key.as_mut_slice()))?;
+      sent(socket.write_all(&mut [b'"']))?;
+      sent(socket.write_all(&mut [b'=']))?;
+      sent(socket.write_all(&mut [b'"']))?;
+      sent(socket.write_all(var.as_mut_slice()))?;
+      sent(socket.write_all(&mut [b'"']))?;
     }
   }
+  Ok(())
 }
 
 fn main() {
@@ -162,9 +172,19 @@ fn main() {
     println!(r#""{key}"="{var}""#);
   }
 
+  // What each service's last round came to, so each outcome is said once, when it changes: a
+  // service that can't be reached says why, rather than the store failing silently every minute
+  let mut said = HashMap::<String, Result<(), String>>::new();
   loop {
     for service in services() {
-      distribute_to_service(&context, &secrets[&service], &service);
+      let outcome = distribute_to_service(&context, &secrets[&service], &service);
+      if said.get(&service) != Some(&outcome) {
+        match &outcome {
+          Ok(()) => eprintln!("sent `{service}` its environment"),
+          Err(why) => eprintln!("didn't send `{service}` its environment: {why}"),
+        }
+        said.insert(service, outcome);
+      }
     }
 
     sleep(Duration::from_mins(1));

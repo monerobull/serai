@@ -192,13 +192,14 @@ pub(crate) async fn new_test(test_body: impl TestBody) {
     let mut compositions = HashMap::new();
     let mut handles = HashMap::new();
     for (name, composition) in [
+      // Every container here is reached by its name, which must fit within a DNS label (63
+      // characters) once dockertest adds its prefix and suffix: the processors' too, which their
+      // Secret Store reaches by name (`DNS_LABEL` below)
       ("message_queue", message_queue_composition),
-      ("bitcoin_processor", bitcoin_processor_composition),
-      // The processor resolves the relayer by its container name, which must fit within a DNS
-      // label (63 characters) once dockertest adds its prefix and suffix
+      ("btc_processor", bitcoin_processor_composition),
       ("eth_relayer", ethereum_relayer_composition),
-      ("ethereum_processor", ethereum_processor_composition),
-      ("monero_processor", monero_processor_composition),
+      ("eth_processor", ethereum_processor_composition),
+      ("xmr_processor", monero_processor_composition),
       ("coordinator", coordinator_composition),
       ("serai", serai_composition),
       // as the relayer's, short enough for a DNS label
@@ -206,7 +207,16 @@ pub(crate) async fn new_test(test_body: impl TestBody) {
       ("eth_store", relayer_secret_store_composition),
       ("coord_store", coordinator_secret_store_composition),
     ] {
+      // dockertest names the container `dockertest-rs-{handle}-` and 20 random characters
+      // (as the dry network's containers show, 7133376482), and a name longer than a DNS label
+      // doesn't resolve: the Secret Store then can't send to it, and says so only in its own log
+      const DNS_LABEL: usize = 63;
       let handle = format!("full_stack-{name}-{unique_id}");
+      let container = "dockertest-rs-".len() + handle.len() + 1 + 20;
+      assert!(
+        container <= DNS_LABEL,
+        "`{handle}`'s container name is {container} characters, over a DNS label ({DNS_LABEL})"
+      );
       compositions.insert(
         name,
         composition
@@ -229,12 +239,12 @@ pub(crate) async fn new_test(test_body: impl TestBody) {
     let handles = Handles {
       message_queue: handles.remove("message_queue").unwrap(),
       bitcoin: (bitcoin_handle.clone(), bitcoin_port),
-      bitcoin_processor: handles.remove("bitcoin_processor").unwrap(),
+      bitcoin_processor: handles.remove("btc_processor").unwrap(),
       ethereum: (ethereum_handle.clone(), ethereum_port),
-      ethereum_processor: handles.remove("ethereum_processor").unwrap(),
+      ethereum_processor: handles.remove("eth_processor").unwrap(),
       ethereum_relayer: handles.remove("eth_relayer").unwrap(),
       monero: (monero_handle.clone(), monero_port),
-      monero_processor: handles.remove("monero_processor").unwrap(),
+      monero_processor: handles.remove("xmr_processor").unwrap(),
       serai: handles.remove("serai").unwrap(),
     };
 
