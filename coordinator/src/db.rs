@@ -108,6 +108,8 @@ mod _internal_db {
       TributaryTransactionsFromDkgConfirmation: (set: ExternalValidatorSet) -> Transaction,
       // Participants to remove
       RemoveParticipant: (set: ExternalValidatorSet) -> u16,
+      // `Transaction::SubstrateBlock`s to provide, with the transaction plans they recognize
+      SubstrateBlockPlansToProvide: (set: ExternalValidatorSet) -> ([u8; 32], Vec<[u8; 32]>),
     }
   }
 }
@@ -141,6 +143,32 @@ impl TributaryTransactionsFromDkgConfirmation {
     set: ExternalValidatorSet,
   ) -> Option<Transaction> {
     _internal_db::TributaryTransactionsFromDkgConfirmation::try_recv(txn, set)
+  }
+}
+
+/// `Transaction::SubstrateBlock`s to provide, each with the transaction plans it makes recognized.
+///
+/// The plans must be in the Tributary's database before the transaction is provided, as scanning
+/// it takes them from there. The coordinator's database is the only one the processor messages
+/// are handled with, so both are queued here for the task which has the Tributary's database.
+pub(crate) struct SubstrateBlockPlansToProvide;
+impl SubstrateBlockPlansToProvide {
+  pub(crate) fn send(
+    txn: &mut (impl Send + DbTxn),
+    set: ExternalValidatorSet,
+    block: [u8; 32],
+    plans: &[[u8; 32]],
+  ) {
+    // If this set has yet to be retired, send this
+    if RetiredTributary::get(txn, set.network).map(|session| session.0) < Some(set.session.0) {
+      _internal_db::SubstrateBlockPlansToProvide::send(txn, set, &(block, plans.to_vec()));
+    }
+  }
+  pub(crate) fn try_recv(
+    txn: &mut (impl Send + DbTxn),
+    set: ExternalValidatorSet,
+  ) -> Option<([u8; 32], Vec<[u8; 32]>)> {
+    _internal_db::SubstrateBlockPlansToProvide::try_recv(txn, set)
   }
 }
 

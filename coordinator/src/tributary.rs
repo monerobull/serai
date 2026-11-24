@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 
 use serai_db::{Transaction as _, Db as DbTrait};
 
-use serai_client_serai::abi::primitives::validator_sets::ExternalValidatorSet;
+use serai_client_serai::abi::primitives::{BlockHash, validator_sets::ExternalValidatorSet};
 
 use tributary_framework::{
   transaction::{TransactionError, TransactionKind, Transaction as _},
@@ -28,12 +28,13 @@ use serai_cosign::{Faulted, CosignIntent, Cosigning};
 use serai_coordinator_substrate::{NewSetInformation, SignSlashReport};
 use serai_coordinator_tributary::{
   Topic, Transaction, ProcessorMessages, CosignIntents, RecognizedTopics, ScanTributaryTask,
+  SubstrateBlockPlans,
 };
 use serai_coordinator_p2p::P2pSend;
 
 use crate::{
   Db, TributaryTransactionsFromProcessorMessages, TributaryTransactionsFromDkgConfirmation,
-  RemoveParticipant, dkg_confirmation::ConfirmDkgTask,
+  RemoveParticipant, SubstrateBlockPlansToProvide, dkg_confirmation::ConfirmDkgTask,
 };
 
 serai_db::schema! {
@@ -265,6 +266,31 @@ impl<
   fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async move {
       let mut made_progress = false;
+
+      // Provide the Substrate blocks, with the transaction plans they recognize
+      loop {
+        let mut txn = self.db.txn();
+        let Some((hash, plans)) = SubstrateBlockPlansToProvide::try_recv(&mut txn, self.set.set)
+        else {
+          break;
+        };
+        let hash = BlockHash(hash);
+
+        // Set the plans in the Tributary's database, as the Tributary's scanner takes them from
+        // there upon scanning the `Transaction::SubstrateBlock` provided now. This is committed
+        // before the transaction is provided. A reboot before the coordinator's txn is committed
+        // sets them again and provides it again, which `provide_transaction` allows.
+        {
+          let mut tributary_txn = self.tributary_db.txn();
+          SubstrateBlockPlans::set(&mut tributary_txn, self.set.set, hash, &plans);
+          tributary_txn.commit();
+        }
+        provide_transaction(self.set.set, &self.tributary, Transaction::SubstrateBlock { hash })
+          .await;
+
+        made_progress = true;
+        txn.commit();
+      }
 
       // Provide/add all transactions sent our way
       loop {
