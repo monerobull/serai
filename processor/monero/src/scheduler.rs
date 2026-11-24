@@ -10,7 +10,6 @@ use dalek_ff_group::Ed25519;
 use monero_wallet::{ed25519::CompressedPoint, interface::prelude::*};
 
 use serai_primitives::{coin::ExternalCoin, balance::Amount};
-use serai_client_monero::Address;
 
 use primitives::{OutputType, ReceivedOutput as _, Payment};
 use scanner::{KeyFor, AddressFor, OutputFor, BlockFor};
@@ -27,24 +26,27 @@ use monero_wallet::{
 
 use crate::{
   EXTERNAL_SUBADDRESS, BRANCH_SUBADDRESS, CHANGE_SUBADDRESS, FORWARDED_SUBADDRESS, view_pair,
+  address::Address,
   transaction::{SignableTransaction, Eventuality},
   rpc::Rpc,
 };
 
 fn address_from_serai_key(key: <Ed25519 as WrappedGroup>::G, kind: OutputType) -> Address {
-  view_pair(key)
-    .address(
-      Network::Mainnet,
-      Some(match kind {
-        OutputType::External => EXTERNAL_SUBADDRESS,
-        OutputType::Branch => BRANCH_SUBADDRESS,
-        OutputType::Change => CHANGE_SUBADDRESS,
-        OutputType::Forwarded => FORWARDED_SUBADDRESS,
-      }),
-      None,
-    )
-    .try_into()
-    .expect("created address which wasn't representable")
+  /*
+    The address for the multisig is a guaranteed address, which is a featured address, which
+    Serai's Monero address (as an `ExternalAddress`) can't represent. Accordingly, it's an
+    `Address::Internal`.
+  */
+  Address::Internal(view_pair(key).address(
+    Network::Mainnet,
+    Some(match kind {
+      OutputType::External => EXTERNAL_SUBADDRESS,
+      OutputType::Branch => BRANCH_SUBADDRESS,
+      OutputType::Change => CHANGE_SUBADDRESS,
+      OutputType::Forwarded => FORWARDED_SUBADDRESS,
+    }),
+    None,
+  ))
 }
 
 async fn signable_transaction(
@@ -290,3 +292,31 @@ impl TransactionPlanner<Rpc, ()> for Planner {
 }
 
 pub(crate) type Scheduler = utxo_standard_scheduler::Scheduler<Rpc, Planner>;
+
+#[cfg(test)]
+mod tests {
+  use borsh::{BorshSerialize as _, BorshDeserialize as _};
+
+  use super::*;
+
+  #[test]
+  fn the_multisigs_own_addresses_are_representable() {
+    let key = <Ed25519 as WrappedGroup>::G::generator() * <Ed25519 as WrappedGroup>::F::from(7u64);
+    for kind in
+      [OutputType::External, OutputType::Branch, OutputType::Change, OutputType::Forwarded]
+    {
+      let address = address_from_serai_key(key, kind);
+      // A guaranteed address, which the multisig's change is sent to
+      let monero = MoneroAddress::from(address);
+      assert!(matches!(
+        monero.kind(),
+        monero_wallet::address::AddressType::Featured { guaranteed: true, payment_id: None, .. }
+      ));
+      // As a scheduler's change address, it's saved and read back
+      let mut buf = vec![];
+      address.serialize(&mut buf).unwrap();
+      assert!(Address::deserialize_reader(&mut buf.as_slice()).unwrap() == address);
+      assert_eq!(address.to_string(), monero.to_string());
+    }
+  }
+}
