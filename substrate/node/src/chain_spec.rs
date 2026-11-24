@@ -158,20 +158,32 @@ fn genesis(
 
   let mut ext = BasicExternalities::new_empty();
   let code_fetcher = WrappedRuntimeCode(bin.clone().into());
-  WasmExecutor::<SubstrateHostFunctions>::builder()
-    .build()
-    .call(
-      &mut ext,
-      &RuntimeCode { code_fetcher: &code_fetcher, heap_pages: None, hash },
-      "GenesisApi_build",
-      &config.encode(),
-      CallContext::Onchain {
-        // We set import as true as this effectively is 'importing' the genesis block
-        import: true,
-      },
-    )
-    .0
-    .unwrap();
+  let executor = WasmExecutor::<SubstrateHostFunctions>::builder().build();
+  let build = |ext: &mut BasicExternalities| {
+    executor
+      .call(
+        ext,
+        &RuntimeCode { code_fetcher: &code_fetcher, heap_pages: None, hash: hash.clone() },
+        "GenesisApi_build",
+        &config.encode(),
+        CallContext::Onchain {
+          // We set import as true as this effectively is 'importing' the genesis block
+          import: true,
+        },
+      )
+      .0
+  };
+  if let Err(e) = build(&mut ext) {
+    /*
+      Testing only: the runtime logs its panic's message before it traps, but the chain spec is
+      built before the node starts its logger (`main.rs`), so that line goes nowhere and the trap
+      alone is printed. Start a plain logger to stderr and build once more, so the runtime's own
+      words come out, then fail as before.
+    */
+    sp_tracing::try_init_simple();
+    let _ = build(&mut BasicExternalities::new_empty());
+    panic!("the runtime couldn't build the genesis block: {e:?}");
+  }
   let mut storage = ext.into_storages();
   storage.top.insert(sp_core::storage::well_known_keys::CODE.to_vec(), bin);
   chain_spec.set_storage(storage);
