@@ -21,8 +21,8 @@ pub const WEEK: Duration = DAY.checked_mul(7).unwrap();
 
 /// The intended duration for a session.
 ///
-/// Testing only (the `testnet` feature): thirty days on a test network, so it's started again before
-/// its first rotation of an external network's keys, which it doesn't exercise. Without the
+/// Testing only (the `testnet` feature): thirty days on a test network, so it's started again
+/// before its first rotation of an external network's keys, which it doesn't exercise. Without the
 /// feature, a week.
 pub const SESSION_LENGTH: Duration =
   if cfg!(feature = "testnet") { DAY.checked_mul(30).unwrap() } else { WEEK };
@@ -31,9 +31,21 @@ pub const SESSION_LENGTH_IN_SLOTS: u64 = SESSION_LENGTH.as_secs() / TARGET_BLOCK
 
 /// The duration for which a retirement signal is locked in before the protocol retires,
 /// represented in the amount of block proposal slots.
+///
+/// Testing only (the `testnet` feature): four sessions, as a test network's session is thirty
+/// days and the signals pallet's genesis requires more than two sessions here. Without the
+/// feature, four weeks, which is four sessions too.
 #[doc(hidden)]
-pub const RETIREMENT_LOCK_IN_DURATION_IN_SLOTS: u64 =
-  WEEK.checked_mul(4).unwrap().as_secs() / TARGET_BLOCK_TIME.as_secs();
+pub const RETIREMENT_LOCK_IN_DURATION_IN_SLOTS: u64 = if cfg!(feature = "testnet") {
+  SESSION_LENGTH.checked_mul(4).unwrap().as_secs() / TARGET_BLOCK_TIME.as_secs()
+} else {
+  WEEK.checked_mul(4).unwrap().as_secs() / TARGET_BLOCK_TIME.as_secs()
+};
+
+// `serai-signals-pallet`'s genesis asserts this, as a retirement signal must expire while another
+// is locked in (`substrate/signals/src/lib.rs`, `genesis_build`). Checked here too, so constants
+// that break it fail to build rather than failing at genesis, inside the runtime.
+const _: () = assert!((2 * SESSION_LENGTH_IN_SLOTS) < RETIREMENT_LOCK_IN_DURATION_IN_SLOTS);
 
 #[allow(unknown_lints)] // `clippy::duration_suboptimal_units` was added with 1.95
 #[expect(clippy::duration_suboptimal_units)]
@@ -49,13 +61,13 @@ fn constants() {
     u64::try_from(SESSION_LENGTH.as_nanos() / TARGET_BLOCK_TIME.as_nanos()).unwrap()
   );
   if cfg!(feature = "testnet") {
-    // Testing only: a test network's session, thirty days
+    // Testing only: a test network's session, thirty days, and its lock-in, four sessions
     assert_eq!(SESSION_LENGTH, Duration::from_secs(30 * 24 * 60 * 60));
     assert_eq!(SESSION_LENGTH_IN_SLOTS, (30 * 24 * 60 * 60) / 6);
+    assert_eq!(RETIREMENT_LOCK_IN_DURATION_IN_SLOTS, (4 * 30 * 24 * 60 * 60) / 6);
   } else {
     assert_eq!(SESSION_LENGTH, WEEK);
     assert_eq!(SESSION_LENGTH_IN_SLOTS, (7 * 24 * 60 * 60) / 6);
+    assert_eq!(RETIREMENT_LOCK_IN_DURATION_IN_SLOTS, (4 * 7 * 24 * 60 * 60) / 6);
   }
-
-  assert_eq!(RETIREMENT_LOCK_IN_DURATION_IN_SLOTS, (4 * 7 * 24 * 60 * 60) / 6);
 }
