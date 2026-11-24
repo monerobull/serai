@@ -40,7 +40,9 @@ impl Environment {
       let mut chars = secrets.iter().copied().map(char::from);
 
       let mut result = HashMap::new();
-      {
+      // every `"key"="value"` the Secret Store sends, until it's sent them all: read once, the
+      // first pair alone was read, then dropped as the socket was waited on again
+      loop {
         match chars.next() {
           Some('"') => {
             let mut key = String::new();
