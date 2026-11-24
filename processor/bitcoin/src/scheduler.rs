@@ -195,6 +195,7 @@ impl<D: 'static + Send + Sync + Db> TransactionPlanner<Rpc<D>, EffectedReceivedO
                 // We still provide an accurate value to ensure a lack of discrepancies
                 Some(Address::new(inputs[0].output.output().script_pubkey.clone()).unwrap()),
                 output,
+                key,
               ));
             }
             res
