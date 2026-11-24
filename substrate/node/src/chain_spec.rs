@@ -1,11 +1,9 @@
 use std::{sync::Arc, fs};
 
-use rand_core::OsRng;
+use rand_core::SeedableRng as _;
+use rand_chacha::ChaCha20Rng;
 use zeroize::Zeroizing;
-use ciphersuite::{
-  group::ff::{Field as _, PrimeField as _},
-  WrappedGroup,
-};
+use ciphersuite::{group::ff::PrimeField as _, WrappedGroup, WithPreferredHash};
 use dalek_ff_group::Ristretto;
 use embedwards25519::Embedwards25519;
 use secq256k1::Secq256k1;
@@ -58,12 +56,30 @@ fn insecure_account_from_name(name: &'static str) -> SeraiAddress {
   Pair::from_seed(&sp_crypto_hashing::blake2_256(format!("//{name}").as_bytes())).public().into()
 }
 
+/// Create an insecure key for a curve from a name alone, which whoever runs the validator's
+/// processors can compute too.
+///
+/// This will have effectively no entropy and MUST NOT be used except for testing purposes.
+fn insecure_arbitrary_key_from_name<C: WithPreferredHash>(name: &str) -> C::F {
+  C::hash_to_F([b"insecure arbitrary key".as_slice(), name.as_bytes()].concat())
+}
+
 /// Create a list of insecure auxiliary keys for the specified validator.
+///
+/// Every node builds genesis itself (`local_config`), so these, and the signatures' randomness, are
+/// all from the validator's name: drawn from `OsRng`, each node built a genesis of its own, and
+/// four nodes couldn't join one chain. The external networks' keys are ones the processors can be
+/// given (`insecure_arbitrary_key_from_name`), as no one could hold random ones.
 fn insecure_auxiliary_keys(name: &'static str) -> Vec<SignedEmbeddedEllipticCurveKeys> {
   let validator = insecure_account_from_name(name);
+  let mut rng = ChaCha20Rng::from_seed(sp_crypto_hashing::blake2_256(
+    format!("auxiliary-keys-//{name}").as_bytes(),
+  ));
+  let embedwards = || Zeroizing::new(insecure_arbitrary_key_from_name::<Embedwards25519>(name));
+  let secq = || Zeroizing::new(insecure_arbitrary_key_from_name::<Secq256k1>(name));
   vec![
     SignedEmbeddedEllipticCurveKeys::serai(
-      &mut OsRng,
+      &mut rng,
       validator,
       &Zeroizing::new(
         <Ristretto as WrappedGroup>::F::from_repr(
@@ -72,23 +88,9 @@ fn insecure_auxiliary_keys(name: &'static str) -> Vec<SignedEmbeddedEllipticCurv
         .unwrap(),
       ),
     ),
-    SignedEmbeddedEllipticCurveKeys::bitcoin(
-      &mut OsRng,
-      validator,
-      &Zeroizing::new(<Embedwards25519 as WrappedGroup>::F::random(&mut OsRng)),
-      &Zeroizing::new(<Secq256k1 as WrappedGroup>::F::random(&mut OsRng)),
-    ),
-    SignedEmbeddedEllipticCurveKeys::ethereum(
-      &mut OsRng,
-      validator,
-      &Zeroizing::new(<Embedwards25519 as WrappedGroup>::F::random(&mut OsRng)),
-      &Zeroizing::new(<Secq256k1 as WrappedGroup>::F::random(&mut OsRng)),
-    ),
-    SignedEmbeddedEllipticCurveKeys::monero(
-      &mut OsRng,
-      validator,
-      &Zeroizing::new(<Embedwards25519 as WrappedGroup>::F::random(&mut OsRng)),
-    ),
+    SignedEmbeddedEllipticCurveKeys::bitcoin(&mut rng, validator, &embedwards(), &secq()),
+    SignedEmbeddedEllipticCurveKeys::ethereum(&mut rng, validator, &embedwards(), &secq()),
+    SignedEmbeddedEllipticCurveKeys::monero(&mut rng, validator, &embedwards()),
   ]
 }
 

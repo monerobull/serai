@@ -20,6 +20,7 @@ name = "serai-node"
 
 [dependencies]
 rand_core = { version = "0.6", default-features = false, features = ["std"] }
+rand_chacha = { version = "0.3", default-features = false, features = ["std"] }
 zeroize = { version = "1", default-features = false, features = ["std"] }
 base16ct = { version = "1", default-features = false, features = ["alloc"] }
 hex = { version = "0.4", default-features = false, features = ["std"] }
