@@ -15,8 +15,12 @@ pub fn serai(
   // Testing only: the dev network's node, which a FerrySwap testnet runs, is built with the
   // `testnet` feature (mints always allowed). The testnet network's isn't.
   let features = if network == Network::Dev { "testnet" } else { "" };
-  let setup = mimalloc(Os::Debian, network.release()) +
-    &build_serai_service("", Os::Debian, network.release(), features, "serai-node");
+  // The node is built `--release` on every network, the dev network's too: a debug build is too
+  // slow to keep up with a running network. That also keeps the random choice of AddressSanitizer
+  // for debug Debian images (`main.rs`) off the node.
+  let release = true;
+  let setup = mimalloc(Os::Debian, release) +
+    &build_serai_service("", Os::Debian, release, features, "serai-node");
 
   let env_vars = [("KEY", hex::encode(serai_key.to_repr()))];
   let mut env_vars_str = String::new();
@@ -42,7 +46,7 @@ CMD {env_vars_str} "/run.sh"
     network.label(),
   );
 
-  let run = os(Os::Debian, network.release(), "", "serai") + &run_serai;
+  let run = os(Os::Debian, release, "", "serai") + &run_serai;
   let res = setup + &run;
 
   let mut serai_path = orchestration_path.to_path_buf();
