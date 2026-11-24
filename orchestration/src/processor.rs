@@ -18,6 +18,10 @@ pub fn processor(
   substrate_evrf_key: Zeroizing<Vec<u8>>,
   network_evrf_key: Zeroizing<Vec<u8>>,
 ) {
+  // Each coin's processor is its own crate, `serai-{coin}-processor`, whose binary has its name and
+  // whose only features are its database's: `serai-processor`, with a feature per coin, is gone
+  // from the workspace (a FerrySwap testnet's dry build, issue #213)
+  let package = format!("serai-{coin}-processor");
   let setup = mimalloc(Os::Debian, network.release()) +
     &build_serai_service(
       if coin == "ethereum" {
@@ -25,14 +29,17 @@ pub fn processor(
 RUN cargo install svm-rs
 RUN svm install 0.8.34
 RUN svm use 0.8.34
+# The build mounts the base image's `/usr/local/cargo` over this one, where `cargo install` put the
+# `solc` shim, so the compiler itself is copied where the build still finds it
+RUN cp "$(find "$HOME/.svm" -type f -name 'solc-0.8.34' | head -n1)" /usr/local/bin/solc && solc --version
 "#
       } else {
         ""
       },
       Os::Debian,
       network.release(),
-      &format!("binaries {} {coin}", network.db()),
-      "serai-processor",
+      network.db(),
+      &package,
     );
 
   const ADDITIONAL_ROOT: &str = r#"
@@ -80,11 +87,11 @@ RUN apt install -y ca-certificates
   let run_processor = format!(
     r#"
 # Copy the Processor binary and relevant license
-COPY --from=builder --chown=processor /serai/bin/serai-processor /bin/
+COPY --from=builder --chown=processor /serai/bin/{package} /bin/
 COPY --from=builder --chown=processor /serai/AGPL-3.0 .
 
 # Run processor
-CMD {env_vars_str} serai-processor
+CMD {env_vars_str} {package}
 "#
   );
 
