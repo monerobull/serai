@@ -4,7 +4,10 @@ use std::collections::HashMap;
 use ciphersuite::*;
 use ciphersuite_kp256::Secp256k1;
 
-use bitcoin_serai::bitcoin::block::{Header, Block as BBlock};
+use bitcoin_serai::bitcoin::{
+  hashes::Hash as _,
+  block::{Header, Block as BBlock},
+};
 
 use serai_client_bitcoin::Address;
 
@@ -70,11 +73,58 @@ impl<D: 'static + Send + Sync + Db> primitives::Block for Block<D> {
   > {
     let mut res = HashMap::new();
     for tx in &self.1.txdata[1 ..] {
-      let id = hash_bytes(tx.compute_txid().to_raw_hash());
+      /*
+        The ID in the byte order `Eventuality::lookup` uses: `bitcoin_serai`'s
+        `SignableTransaction::txid`, and `Output::transaction_id`, are the txid's bytes as they are,
+        not reversed (as `hash_bytes` reverses them).
+      */
+      let id = tx.compute_txid().to_raw_hash().to_byte_array();
       if let Some(eventuality) = eventualities.active_eventualities.remove(id.as_slice()) {
         res.insert(id, eventuality);
       }
     }
     res
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use bitcoin_serai::bitcoin::{
+    Amount, Network, TxOut, ScriptBuf,
+    absolute::LockTime,
+    blockdata::constants::genesis_block,
+    transaction::{Version, Transaction},
+  };
+
+  use serai_db::MemDb;
+
+  use primitives::{Block as _, Eventuality as _};
+
+  use super::*;
+
+  #[test]
+  fn an_eventuality_resolves_in_the_block_with_its_transaction() {
+    let tx = Transaction {
+      version: Version(2),
+      lock_time: LockTime::ZERO,
+      input: vec![],
+      output: vec![TxOut { value: Amount::from_sat(1), script_pubkey: ScriptBuf::new() }],
+    };
+    // The Eventuality for it, as the planner makes it (`SignableTransaction::txid`)
+    let eventuality = Eventuality {
+      txid: tx.compute_txid().to_raw_hash().to_byte_array(),
+      singular_spent_output: None,
+    };
+
+    let mut block = genesis_block(Network::Regtest);
+    block.txdata.push(tx);
+    let block = Block(MemDb::new(), block);
+
+    let mut tracker = EventualityTracker::default();
+    tracker.active_eventualities.insert(eventuality.lookup(), eventuality.clone());
+    let resolved = block.check_for_eventuality_resolutions(&mut tracker);
+    assert!(tracker.active_eventualities.is_empty());
+    assert_eq!(resolved.len(), 1);
+    assert_eq!(resolved.values().next().unwrap().id(), eventuality.id());
   }
 }
