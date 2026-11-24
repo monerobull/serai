@@ -463,10 +463,9 @@ fn main() {
   // two that don't build two genesis blocks and never finalize
   #[cfg(feature = "testnet")]
   if endows_test_account {
-    sp_tracing::warn!(
-      "the test network's own account, endowed at genesis: {}",
-      std::env::var("SERAI_TEST_ACCOUNT").unwrap_or_default()
-    );
+    #[expect(clippy::disallowed_methods)]
+    let account = std::env::var("SERAI_TEST_ACCOUNT").unwrap_or_default();
+    sp_tracing::warn!("the test network's own account, endowed at genesis: {account}");
   }
 
 

@@ -207,6 +207,7 @@ pub(super) fn solo_config(env: Option<&Environment>) -> ChainSpec {
 /// isn't a Serai address, or with one of the development accounts.
 #[cfg(feature = "testnet")]
 fn testnet_account(development: &[SeraiAddress]) -> SeraiAddress {
+  #[expect(clippy::disallowed_methods)]
   let account = std::env::var("SERAI_TEST_ACCOUNT").unwrap_or_else(|_| {
     panic!(
       "built with the testnet feature: set SERAI_TEST_ACCOUNT to the test network's own Serai \
