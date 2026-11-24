@@ -173,17 +173,18 @@ fn genesis(
       )
       .0
   };
-  if let Err(e) = build(&mut ext) {
-    /*
-      Testing only: the runtime logs its panic's message before it traps, but the chain spec is
-      built before the node starts its logger (`main.rs`), so that line goes nowhere and the trap
-      alone is printed. Start a plain logger to stderr and build once more, so the runtime's own
-      words come out, then fail as before.
-    */
+  let built = build(&mut ext);
+  /*
+    Testing only (the `testnet` feature): the runtime logs its panic's message before it traps,
+    but the chain spec is built before the node starts its logger (`main.rs`), so that line goes
+    nowhere and the trap alone is printed. Start a plain logger to stderr and build once more, so
+    the runtime's own words come out, then fail as before. Without the feature, as upstream's.
+  */
+  if cfg!(feature = "testnet") && built.is_err() {
     sp_tracing::try_init_simple();
     let _ = build(&mut BasicExternalities::new_empty());
-    panic!("the runtime couldn't build the genesis block: {e:?}");
   }
+  built.unwrap();
   let mut storage = ext.into_storages();
   storage.top.insert(sp_core::storage::well_known_keys::CODE.to_vec(), bin);
   chain_spec.set_storage(storage);
