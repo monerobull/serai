@@ -10,7 +10,7 @@ use primitives::{
 };
 
 use crate::{
-  lifetime::LifetimeStage,
+  lifetime::{LifetimeStage, latest_active_key},
   db::{
     SeraiKey, OutputWithInInstruction, ReceiverScanData, ScannerGlobalDb, SubstrateToEventualityDb,
     ScanToEventualityDb,
@@ -287,18 +287,7 @@ impl<
         log::debug!("checking eventuality completions in block: {} ({b})", hex::encode(block.id()));
 
         let (keys, keys_with_stages) = self.keys_and_keys_with_stages(b);
-        let latest_active_key = {
-          let mut keys_with_stages = keys_with_stages.clone();
-          loop {
-            // Use the most recent key
-            let (key, stage) = keys_with_stages.pop().unwrap();
-            // Unless this key is active, but not yet reporting
-            if stage == LifetimeStage::ActiveYetNotReporting {
-              continue;
-            }
-            break key;
-          }
-        };
+        let latest_active_key = latest_active_key(&keys_with_stages);
 
         let mut txn = self.db.txn();
 
