@@ -29,18 +29,17 @@ fn our_i(
   set: &NewSetInformation,
   key: &Zeroizing<<Ristretto as WrappedGroup>::F>,
   data: &HashMap<Participant, Vec<u8>>,
-) -> Participant {
+) -> Option<Participant> {
   let public = SeraiAddress((Ristretto::generator() * key.deref()).to_bytes());
 
-  let mut our_i = None;
   for participant in data.keys() {
     let validator_index = usize::from(u16::from(*participant) - 1);
     let (validator, _weight) = set.validators[validator_index];
     if validator == public {
-      our_i = Some(*participant);
+      return Some(*participant);
     }
   }
-  our_i.unwrap()
+  None
 }
 
 // Take a HashMap of participations with non-contiguous Participants and convert them to a
@@ -235,6 +234,14 @@ impl<
               id: messages::sign::SignId { attempt, .. },
               mut preprocesses,
             } => {
+              // If we weren't selected for this attempt's signing set, sit it out without
+              // dropping `self.signer` (dropping it would cause the loop to re-publish attempt 0)
+              let Some(our_i) = our_i(&self.set, &self.key, &preprocesses) else {
+                tributary_txn.commit();
+                made_progress = true;
+                continue;
+              };
+
               // Confirm the preprocess we're expected to sign with is the one we locally have
               // It may be different if we rebooted and made a second preprocess for this attempt
               let Some(Signer::Preprocess { attempt: our_attempt, seed, preprocess }) =
@@ -299,7 +306,6 @@ impl<
               assert_eq!(preprocess.as_slice(), preprocess_from_cache.serialize().as_slice());
 
               // Ensure this is a consistent signing session
-              let our_i = our_i(&self.set, &self.key, &preprocesses);
               let consistent = (attempt == our_attempt) &&
                 (preprocesses.remove(&our_i).unwrap().as_slice() == preprocess.as_slice());
               if !consistent {
@@ -363,6 +369,14 @@ impl<
               id: messages::sign::SignId { attempt, .. },
               mut shares,
             } => {
+              // If we weren't selected for this attempt's signing set, sit it out without
+              // dropping `self.signer` (dropping it would cause the loop to re-publish attempt 0)
+              let Some(our_i) = our_i(&self.set, &self.key, &shares) else {
+                tributary_txn.commit();
+                made_progress = true;
+                continue;
+              };
+
               let Some(Signer::Share { attempt: our_attempt, musig_validators, share, machine }) =
                 self.signer.take()
               else {
@@ -371,7 +385,6 @@ impl<
               };
 
               // Ensure this is a consistent signing session
-              let our_i = our_i(&self.set, &self.key, &shares);
               let consistent = (attempt == our_attempt) &&
                 (shares.remove(&our_i).unwrap().as_slice() == share.as_slice());
               if !consistent {
@@ -467,5 +480,39 @@ impl<
 
       Ok(made_progress)
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use serai_client_serai::abi::primitives::{network_id::ExternalNetworkId, validator_sets::Session};
+
+  use super::*;
+
+  #[test]
+  fn our_i_returns_none_when_outside_quorum() {
+    let keys = (1u64 ..= 4)
+      .map(|i| Zeroizing::new(<Ristretto as WrappedGroup>::F::from(i)))
+      .collect::<Vec<_>>();
+    let validators = keys
+      .iter()
+      .map(|key| (SeraiAddress((Ristretto::generator() * key.deref()).to_bytes()), 1))
+      .collect::<Vec<_>>();
+    let set = NewSetInformation::new(
+      ExternalValidatorSet { session: Session(0), network: ExternalNetworkId::Bitcoin },
+      [0; 32],
+      0,
+      3,
+      validators,
+      vec![],
+    );
+
+    let quorum = (1u16 ..= 3)
+      .map(|i| (Participant::new(i).unwrap(), vec![u8::try_from(i).unwrap()]))
+      .collect::<HashMap<_, _>>();
+
+    assert_eq!(our_i(&set, &keys[0], &quorum), Some(Participant::new(1).unwrap()));
+    assert_eq!(our_i(&set, &keys[2], &quorum), Some(Participant::new(3).unwrap()));
+    assert_eq!(our_i(&set, &keys[3], &quorum), None);
   }
 }
