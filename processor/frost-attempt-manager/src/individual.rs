@@ -139,6 +139,17 @@ impl<D: 'static + Send + Db, M: Clone + PreprocessMachine> SigningProtocol<D, M>
   ) -> Vec<ProcessorMessage> {
     log::debug!("handling preprocesses for signing protocol {:?}", self.id);
 
+    /*
+      The preprocesses are those the Tributary accumulated until it had enough, which needn't
+      include ours. If they don't, we aren't one of this attempt's signers. Signing over them with
+      our own preprocess added would be signing for a different set than everyone else, and our
+      share would be invalid, so we sit this attempt out.
+    */
+    if !serialized_preprocesses.contains_key(&self.start_i) {
+      log::debug!("not among the signers of attempt {attempt} of signing protocol {:?}", self.id);
+      return vec![];
+    }
+
     let Some((machines, our_serialized_preprocesses)) = self.preprocessed.remove(&attempt) else {
       return vec![];
     };
@@ -280,5 +291,87 @@ impl<D: 'static + Send + Db, M: Clone + PreprocessMachine> SigningProtocol<D, M>
   /// Cleanup the database entries for a specified signing protocol.
   pub(crate) fn cleanup(txn: &mut impl DbTxn, session: Session, id: VariantSignId) {
     Attempted::del(txn, session, id);
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use serai_db::MemDb;
+
+  use rand_core::{RngCore, CryptoRng};
+
+  use frost::{
+    ThresholdKeys,
+    curve::{Ristretto, IrtfRistrettoHram},
+    algorithm::IrtfSchnorr,
+    sign::{Preprocess, AlgorithmMachine, AlgorithmSignMachine},
+    tests::{key_gen, THRESHOLD, PARTICIPANTS},
+  };
+
+  use super::*;
+
+  type Algorithm = IrtfSchnorr<Ristretto, IrtfRistrettoHram>;
+
+  // A machine which is `Clone`, as `SigningProtocol` requires
+  #[derive(Clone)]
+  struct Machine(ThresholdKeys<Ristretto>);
+  impl PreprocessMachine for Machine {
+    type Preprocess = Preprocess<Ristretto, ()>;
+    type Signature = <AlgorithmMachine<Ristretto, Algorithm> as PreprocessMachine>::Signature;
+    type SignMachine = AlgorithmSignMachine<Ristretto, Algorithm>;
+    fn preprocess<R: RngCore + CryptoRng>(
+      self,
+      rng: &mut R,
+    ) -> (Self::SignMachine, Self::Preprocess) {
+      AlgorithmMachine::new(Algorithm::irtf(), self.0).preprocess(rng)
+    }
+  }
+
+  #[test]
+  fn sits_out_an_attempt_it_isnt_a_signer_of() {
+    let keys = key_gen::<_, Ristretto>(&mut OsRng);
+    let mut protocols = (1 ..= PARTICIPANTS)
+      .map(|i| {
+        let i = Participant::new(i).unwrap();
+        (
+          i,
+          SigningProtocol::new(
+            MemDb::new(),
+            Session(0),
+            i,
+            VariantSignId::Batch([0; 32]),
+            vec![Machine(keys[&i].clone())],
+          ),
+        )
+      })
+      .collect::<HashMap<_, _>>();
+
+    let mut preprocesses = HashMap::new();
+    for (i, protocol) in &mut protocols {
+      let msgs = protocol.attempt(0);
+      let [ProcessorMessage::Preprocesses { preprocesses: preprocess, .. }] = msgs.as_slice()
+      else {
+        panic!("attempt didn't yield its preprocesses");
+      };
+      let [preprocess] = preprocess.as_slice() else {
+        panic!("one machine yielded many preprocesses")
+      };
+      preprocesses.insert(*i, preprocess.clone());
+    }
+
+    // The Tributary accumulates the first `THRESHOLD` preprocesses, leaving the last participant
+    // out
+    let accumulated = preprocesses
+      .into_iter()
+      .filter(|(i, _preprocess)| u16::from(*i) <= THRESHOLD)
+      .collect::<HashMap<_, _>>();
+    for (i, protocol) in &mut protocols {
+      let msgs = protocol.preprocesses(0, accumulated.clone());
+      if u16::from(*i) <= THRESHOLD {
+        assert!(matches!(msgs.as_slice(), [ProcessorMessage::Shares { .. }]));
+      } else {
+        assert!(msgs.is_empty());
+      }
+    }
   }
 }
