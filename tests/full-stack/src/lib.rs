@@ -17,7 +17,8 @@ const RPC_PASS: &str = "seraidex";
 #[cfg(test)]
 mod tests;
 
-#[expect(unused)]
+// every field is read by the tests, now the Secret Store is given each processor's host
+#[cfg_attr(not(test), expect(unused))]
 #[derive(Clone, Debug)]
 pub struct Handles {
   bitcoin: (String, u32),

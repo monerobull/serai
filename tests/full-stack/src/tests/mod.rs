@@ -105,45 +105,66 @@ pub(crate) async fn new_test(test_body: impl TestBody) {
       _ => panic!("needed a 7th name for a serai node"),
     };
 
-    let (coord_key, message_queue_keys, message_queue_composition) = message_queue_instance();
+    let (coord_key, message_queue_keys, message_queue_composition, message_queue_variables) =
+      message_queue_instance();
 
-    let mut bitcoin_processor_composition = processor_instance(
+    let (mut bitcoin_processor_composition, bitcoin_variables, _, _) = processor_instance(
       name,
       ExternalNetworkId::Bitcoin,
       bitcoin_port,
       message_queue_keys[&ExternalNetworkId::Bitcoin],
-    )
-    .0;
+    );
     assert_eq!(bitcoin_processor_composition.len(), 1);
     let bitcoin_processor_composition = bitcoin_processor_composition.swap_remove(0);
 
     // The Ethereum processor is accompanied by its relayer
-    let (ethereum_processor_composition, ethereum_relayer_composition) = {
-      let mut compositions = processor_instance(
+    let (
+      ethereum_processor_composition,
+      ethereum_relayer_composition,
+      ethereum_variables,
+      relayer_variables,
+    ) = {
+      let (mut compositions, variables, relayer_variables, _) = processor_instance(
         name,
         ExternalNetworkId::Ethereum,
         ethereum_port,
         message_queue_keys[&ExternalNetworkId::Ethereum],
-      )
-      .0;
+      );
       assert_eq!(compositions.len(), 2);
       let relayer = compositions.swap_remove(1);
       let processor = compositions.swap_remove(0);
-      (processor, relayer)
+      (processor, relayer, variables, relayer_variables)
     };
 
-    let mut monero_processor_composition = processor_instance(
+    let (mut monero_processor_composition, monero_variables, _, _) = processor_instance(
       name,
       ExternalNetworkId::Monero,
       monero_port,
       message_queue_keys[&ExternalNetworkId::Monero],
-    )
-    .0;
+    );
     assert_eq!(monero_processor_composition.len(), 1);
     let monero_processor_composition = monero_processor_composition.swap_remove(0);
 
-    let coordinator_composition = coordinator_instance(name, coord_key);
+    let (coordinator_composition, coordinator_variables) = coordinator_instance(name, coord_key);
     let serai_composition = serai_composition(name);
+
+    // Testing only: every service but the node takes its environment from a Secret Store, which
+    // dials each one it serves on port 59119 (`secret-store/README.md`). One serves this
+    // validator's message queue and processors. The relayer has no slot of its own, so a second
+    // serves it in the message queue's. The coordinator's is started with it, below.
+    let secret_store_composition = secret_store_instance(
+      [
+        for_service("MESSAGE_QUEUE", message_queue_variables),
+        for_service("PROCESSOR_BITCOIN", bitcoin_variables),
+        for_service("PROCESSOR_ETHEREUM", ethereum_variables),
+        for_service("PROCESSOR_MONERO", monero_variables),
+      ]
+      .concat(),
+    );
+    let relayer_secret_store_composition =
+      secret_store_instance(for_service("MESSAGE_QUEUE", relayer_variables));
+    let coordinator_secret_store_composition =
+      secret_store_instance(for_service("COORDINATOR", coordinator_variables));
 
     // Give every item in this stack a unique ID
     // Uses a Mutex as we can't generate a 8-byte random ID without hitting hostname length limits
@@ -168,6 +189,10 @@ pub(crate) async fn new_test(test_body: impl TestBody) {
       ("monero_processor", monero_processor_composition),
       ("coordinator", coordinator_composition),
       ("serai", serai_composition),
+      // as the relayer's, short enough for a DNS label
+      ("store", secret_store_composition),
+      ("eth_store", relayer_secret_store_composition),
+      ("coord_store", coordinator_secret_store_composition),
     ] {
       let handle = format!("full_stack-{name}-{unique_id}");
       compositions.insert(
@@ -201,34 +226,38 @@ pub(crate) async fn new_test(test_body: impl TestBody) {
       serai: handles.remove("serai").unwrap(),
     };
 
+    // The Secret Store's hosts: each service it serves, by container name, and the hosts those
+    // services reach, sent to them as overrides
     {
-      let bitcoin_processor_composition = compositions.get_mut("bitcoin_processor").unwrap();
-      bitcoin_processor_composition
-        .inject_container_name(handles.message_queue.clone(), "MESSAGE_QUEUE_RPC");
-      bitcoin_processor_composition
-        .inject_container_name(handles.bitcoin.0.clone(), "NETWORK_RPC_HOSTNAME");
+      let store = compositions.get_mut("store").unwrap();
+      store.inject_container_name(handles.message_queue.clone(), "MESSAGE_QUEUE");
+      for (service, processor, node) in [
+        ("PROCESSOR_BITCOIN", &handles.bitcoin_processor, &handles.bitcoin.0),
+        ("PROCESSOR_ETHEREUM", &handles.ethereum_processor, &handles.ethereum.0),
+        ("PROCESSOR_MONERO", &handles.monero_processor, &handles.monero.0),
+      ] {
+        store.inject_container_name(processor.clone(), service);
+        store.inject_container_name(
+          handles.message_queue.clone(),
+          format!("{service}_MESSAGE_QUEUE_RPC"),
+        );
+        store.inject_container_name(node.clone(), format!("{service}_NETWORK_RPC_HOSTNAME"));
+      }
+      store.inject_container_name(
+        handles.ethereum_relayer.clone(),
+        "PROCESSOR_ETHEREUM_ETHEREUM_RELAYER_HOSTNAME",
+      );
+      store.modify_env("PROCESSOR_ETHEREUM_ETHEREUM_RELAYER_PORT", "20830");
     }
+    compositions
+      .get_mut("eth_store")
+      .unwrap()
+      .inject_container_name(handles.ethereum_relayer.clone(), "MESSAGE_QUEUE");
 
-    {
-      let ethereum_processor_composition = compositions.get_mut("ethereum_processor").unwrap();
-      ethereum_processor_composition
-        .inject_container_name(handles.message_queue.clone(), "MESSAGE_QUEUE_RPC");
-      ethereum_processor_composition
-        .inject_container_name(handles.ethereum.0.clone(), "NETWORK_RPC_HOSTNAME");
-      ethereum_processor_composition
-        .inject_container_name(handles.ethereum_relayer.clone(), "ETHEREUM_RELAYER_HOSTNAME");
-      ethereum_processor_composition.modify_env("ETHEREUM_RELAYER_PORT", "20830");
-    }
-
-    {
-      let monero_processor_composition = compositions.get_mut("monero_processor").unwrap();
-      monero_processor_composition
-        .inject_container_name(handles.message_queue.clone(), "MESSAGE_QUEUE_RPC");
-      monero_processor_composition
-        .inject_container_name(handles.monero.0.clone(), "NETWORK_RPC_HOSTNAME");
-    }
-
-    coordinator_compositions.push(compositions.remove("coordinator").unwrap());
+    coordinator_compositions.push((
+      compositions.remove("coordinator").unwrap(),
+      compositions.remove("coord_store").unwrap(),
+    ));
 
     all_handles.push(handles);
     for (_, composition) in compositions {
@@ -237,7 +266,7 @@ pub(crate) async fn new_test(test_body: impl TestBody) {
   }
 
   struct Context {
-    pending_coordinator_compositions: Mutex<Vec<TestBodySpecification>>,
+    pending_coordinator_compositions: Mutex<Vec<(TestBodySpecification, TestBodySpecification)>>,
     handles: Vec<Handles>,
     test_body: Box<dyn TestBody>,
   }
@@ -282,21 +311,25 @@ pub(crate) async fn new_test(test_body: impl TestBody) {
         maybe_coordinator
       };
 
-      if let Some((mut composition, handles)) = maybe_coordinator {
+      if let Some(((composition, mut store), handles)) = maybe_coordinator {
         let network = {
           let outer_ops = outer_ops.lock().await;
           let outer_ops = outer_ops.as_ref().unwrap();
           // Spawn it by building another DockerTest which recursively calls this function
           // TODO: Spawn this outside of DockerTest so we can remove the recursion
+          // The coordinator and its Secret Store share the node's network: the Secret Store
+          // reaches the coordinator on 127.0.0.1, and the dev-seeded node doesn't listen on 59119
           let serai_container = outer_ops.handle(&handles.serai);
-          composition.modify_env("SERAI_HOSTNAME", serai_container.ip());
+          store.modify_env("COORDINATOR", "127.0.0.1");
+          store.modify_env("COORDINATOR_SERAI_HOSTNAME", serai_container.ip());
           let message_queue_container = outer_ops.handle(&handles.message_queue);
-          composition.modify_env("MESSAGE_QUEUE_RPC", message_queue_container.ip());
+          store.modify_env("COORDINATOR_MESSAGE_QUEUE_RPC", message_queue_container.ip());
 
           format!("container:{}", serai_container.name())
         };
         let mut test = DockerTest::new().with_network(dockertest::Network::External(network));
         test.provide_container(composition);
+        test.provide_container(store);
 
         drop(context_lock);
         test.run_async(spawn_coordinator_or_run_test).await;

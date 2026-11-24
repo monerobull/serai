@@ -41,6 +41,9 @@ use ethereum_relayer::ethereum_relayer;
 mod message_queue;
 use message_queue::message_queue;
 
+mod secret_store;
+use secret_store::secret_store;
+
 mod processor;
 use processor::processor;
 
@@ -571,6 +574,9 @@ fn dockerfiles(network: Network) {
   let monero_key = infrastructure_keys.remove("monero").unwrap();
 
   ethereum_relayer(&orchestration_path, network);
+
+  // Testing only: the Secret Store, which the harness starts for each validator
+  secret_store(&orchestration_path, network);
 
   message_queue(
     &orchestration_path,

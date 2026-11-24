@@ -30,32 +30,58 @@ fn insecure_keypair_from_name(name: &str) -> Pair {
   Pair::from_string(&format!("//{name}"), None).unwrap()
 }
 
+/// What a service reads from its environment, which it receives from a Secret Store
+/// (`secret-store/README.md`): each name as the service reads it, with its value.
+pub type Variables = Vec<(String, String)>;
+
+/// The names a Secret Store sends `service` under: `{SERVICE}_{NAME}`, set on the Secret Store.
+pub fn for_service(service: &str, variables: Variables) -> Variables {
+  variables.into_iter().map(|(name, value)| (format!("{service}_{name}"), value)).collect()
+}
+
+/// A Secret Store, with every variable it's to send set on it as `{SERVICE}_{NAME}`, and the
+/// hosts of the services it serves set as `{SERVICE}` by whoever starts it. Each service waits
+/// for it on port 59119 and takes the last value sent of each name, so these are what it reads
+/// (testing only: the entropy it's started with goes unused, see its image).
+pub fn secret_store_instance(variables: Variables) -> TestBodySpecification {
+  serai_docker_tests::build("secret-store".to_owned());
+
+  TestBodySpecification::with_image(
+    Image::with_repository("serai-dev-secret-store").pull_policy(PullPolicy::Never),
+  )
+  .replace_env(variables.into_iter().collect())
+}
+
+/// The coordinator, and what its Secret Store sends it but its hosts (`SERAI_HOSTNAME`,
+/// `MESSAGE_QUEUE_RPC`), which are known once the network's up.
 pub fn coordinator_instance(
   name: &str,
   message_queue_key: <Ristretto as WrappedGroup>::F,
-) -> TestBodySpecification {
+) -> (TestBodySpecification, Variables) {
   serai_docker_tests::build("coordinator".to_owned());
 
-  TestBodySpecification::with_image(
+  let composition = TestBodySpecification::with_image(
     Image::with_repository("serai-dev-coordinator").pull_policy(PullPolicy::Never),
   )
   .replace_env(
-    [
-      ("MESSAGE_QUEUE_KEY".to_owned(), hex::encode(message_queue_key.to_repr())),
-      ("DB_PATH".to_owned(), "./coordinator-db".to_owned()),
-      ("SERAI_KEY".to_owned(), {
-        hex::encode(&insecure_keypair_from_name(name).as_ref().secret.to_bytes()[.. 32])
-      }),
-      (
-        "RUST_LOG".to_owned(),
-        "serai_coordinator=trace,".to_owned() +
-          "serai-coordinator-libp2p-p2p=trace," +
-          "tributary_chain=trace," +
-          "tendermint=trace",
-      ),
-    ]
+    [(
+      "RUST_LOG".to_owned(),
+      "serai_coordinator=trace,".to_owned() +
+        "serai-coordinator-libp2p-p2p=trace," +
+        "tributary_chain=trace," +
+        "tendermint=trace",
+    )]
     .into(),
-  )
+  );
+  let variables = vec![
+    ("MESSAGE_QUEUE_KEY".to_owned(), hex::encode(message_queue_key.to_repr())),
+    ("DB_PATH".to_owned(), "./coordinator-db".to_owned()),
+    // genesis's Serai key for this validator (`chain_spec.rs`), which its dev-seeded node holds
+    ("SERAI_AUXILIARY_KEY".to_owned(), {
+      hex::encode(&insecure_keypair_from_name(name).as_ref().secret.to_bytes()[.. 32])
+    }),
+  ];
+  (composition, variables)
 }
 
 pub fn serai_composition(name: &str) -> TestBodySpecification {
@@ -76,12 +102,14 @@ pub struct EvrfPublicKeys {
   network: Vec<u8>,
 }
 
+/// A processor, its relayer for Ethereum, and what their Secret Stores send them but their hosts
+/// (`MESSAGE_QUEUE_RPC`, `NETWORK_RPC_HOSTNAME`, the relayer's), which are container names.
 pub fn processor_instance(
   name: &str,
   network: ExternalNetworkId,
   port: u32,
   message_queue_key: <Ristretto as WrappedGroup>::F,
-) -> (Vec<TestBodySpecification>, EvrfPublicKeys) {
+) -> (Vec<TestBodySpecification>, Variables, Variables, EvrfPublicKeys) {
   let substrate_evrf_key = insecure_arbitrary_key_from_name::<Embedwards25519>(name);
   let substrate_evrf_pub_key = (Embedwards25519::generator() * substrate_evrf_key).to_bytes();
   let substrate_evrf_key = substrate_evrf_key.to_repr();
@@ -111,21 +139,22 @@ pub fn processor_instance(
     Image::with_repository(format!("serai-dev-{image}")).pull_policy(PullPolicy::Never),
   )
   .replace_env(
-    [
-      ("MESSAGE_QUEUE_KEY".to_owned(), hex::encode(message_queue_key.to_repr())),
-      ("SUBSTRATE_EVRF_KEY".to_owned(), hex::encode(substrate_evrf_key)),
-      ("NETWORK_EVRF_KEY".to_owned(), hex::encode(network_evrf_key)),
-      ("NETWORK".to_owned(), network_str.to_owned()),
-      ("NETWORK_RPC_LOGIN".to_owned(), format!("{RPC_USER}:{RPC_PASS}")),
-      ("NETWORK_RPC_PORT".to_owned(), port.to_string()),
-      ("DB_PATH".to_owned(), "./processor-db".to_owned()),
-      (
-        "RUST_LOG".to_owned(),
-        "info,serai_processor=trace,serai_processor_key_gen=trace,messages=trace".to_owned(),
-      ),
-    ]
+    [(
+      "RUST_LOG".to_owned(),
+      "info,serai_processor=trace,serai_processor_key_gen=trace,messages=trace".to_owned(),
+    )]
     .into(),
   )];
+  // the processor's keys are genesis's for this validator (`chain_spec.rs`), from its name
+  let variables = vec![
+    ("MESSAGE_QUEUE_KEY".to_owned(), hex::encode(message_queue_key.to_repr())),
+    ("SUBSTRATE_AUXILIARY_KEY".to_owned(), hex::encode(substrate_evrf_key)),
+    ("NETWORK_AUXILIARY_KEY".to_owned(), hex::encode(network_evrf_key)),
+    ("NETWORK_RPC_LOGIN".to_owned(), format!("{RPC_USER}:{RPC_PASS}")),
+    ("NETWORK_RPC_PORT".to_owned(), port.to_string()),
+    ("DB_PATH".to_owned(), "./processor-db".to_owned()),
+  ];
+  let mut relayer_variables = vec![];
 
   if network == ExternalNetworkId::Ethereum {
     serai_docker_tests::build("ethereum-relayer".to_owned());
@@ -135,17 +164,19 @@ pub fn processor_instance(
           .pull_policy(PullPolicy::Never),
       )
       .replace_env(
-        [
-          ("DB_PATH".to_owned(), "./ethereum-relayer-db".to_owned()),
-          ("RUST_LOG".to_owned(), "serai_ethereum_relayer=trace,".to_owned()),
-        ]
-        .into(),
+        [("RUST_LOG".to_owned(), "serai_ethereum_relayer=trace,".to_owned())].into(),
       )
       .set_publish_all_ports(true),
     );
+    relayer_variables.push(("DB_PATH".to_owned(), "./ethereum-relayer-db".to_owned()));
   }
 
-  (res, EvrfPublicKeys { substrate: substrate_evrf_pub_key, network: network_evrf_pub_key })
+  (
+    res,
+    variables,
+    relayer_variables,
+    EvrfPublicKeys { substrate: substrate_evrf_pub_key, network: network_evrf_pub_key },
+  )
 }
 
 const BTC_PORT: u32 = 8332;
@@ -195,10 +226,12 @@ pub fn network_instance(network: ExternalNetworkId) -> (TestBodySpecification, u
 }
 
 type MessageQueuePrivateKey = <Ristretto as WrappedGroup>::F;
+/// The message queue, the keys of the services it serves, and what its Secret Store sends it.
 pub fn message_queue_instance() -> (
   MessageQueuePrivateKey,
   HashMap<ExternalNetworkId, MessageQueuePrivateKey>,
   TestBodySpecification,
+  Variables,
 ) {
   serai_docker_tests::build("message-queue".to_owned());
 
@@ -215,27 +248,24 @@ pub fn message_queue_instance() -> (
     policy: LogPolicy::Always,
     source: LogSource::Both,
   }))
-  .replace_env(
-    [
-      ("COORDINATOR_KEY".to_owned(), hex::encode((Ristretto::generator() * coord_key).to_bytes())),
-      (
-        "BITCOIN_KEY".to_owned(),
-        hex::encode((Ristretto::generator() * priv_keys[&ExternalNetworkId::Bitcoin]).to_bytes()),
-      ),
-      (
-        "ETHEREUM_KEY".to_owned(),
-        hex::encode((Ristretto::generator() * priv_keys[&ExternalNetworkId::Ethereum]).to_bytes()),
-      ),
-      (
-        "MONERO_KEY".to_owned(),
-        hex::encode((Ristretto::generator() * priv_keys[&ExternalNetworkId::Monero]).to_bytes()),
-      ),
-      ("DB_PATH".to_owned(), "./message-queue-db".to_owned()),
-      ("RUST_LOG".to_owned(), "serai_message_queue=trace,".to_owned()),
-    ]
-    .into(),
-  )
+  .replace_env([("RUST_LOG".to_owned(), "serai_message_queue=trace,".to_owned())].into())
   .set_publish_all_ports(true);
+  let variables = vec![
+    ("COORDINATOR_KEY".to_owned(), hex::encode((Ristretto::generator() * coord_key).to_bytes())),
+    (
+      "BITCOIN_KEY".to_owned(),
+      hex::encode((Ristretto::generator() * priv_keys[&ExternalNetworkId::Bitcoin]).to_bytes()),
+    ),
+    (
+      "ETHEREUM_KEY".to_owned(),
+      hex::encode((Ristretto::generator() * priv_keys[&ExternalNetworkId::Ethereum]).to_bytes()),
+    ),
+    (
+      "MONERO_KEY".to_owned(),
+      hex::encode((Ristretto::generator() * priv_keys[&ExternalNetworkId::Monero]).to_bytes()),
+    ),
+    ("DB_PATH".to_owned(), "./message-queue-db".to_owned()),
+  ];
 
-  (coord_key, priv_keys, composition)
+  (coord_key, priv_keys, composition, variables)
 }
