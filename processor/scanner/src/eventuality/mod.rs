@@ -16,7 +16,7 @@ use crate::{
     ScanToEventualityDb,
   },
   BlockExt as _, ScannerFeed, KeyFor, AddressFor, OutputFor, EventualityFor, SchedulerUpdate,
-  Scheduler, CompletedEventualities, sort_outputs,
+  Scheduler, CompletedEventualities, SubstrateBlockAcks, sort_outputs,
   scan::{next_to_scan_for_outputs_block, queue_output_until_block},
 };
 
@@ -32,6 +32,37 @@ pub(crate) fn latest_scannable_block<S: ScannerFeed>(getter: &impl Get) -> Optio
   assert!(S::WINDOW_LENGTH > 0);
   EventualityDb::<S>::next_to_check_for_eventualities_block(getter)
     .map(|b| b + S::WINDOW_LENGTH - 1)
+}
+
+/// Report the transactions planned to the coordinator.
+///
+/// This sends a `SubstrateBlockAck` with the IDs of the transactions planned, so the coordinator
+/// can recognize their signing protocols on the Tributary. Without this, the signing protocols the
+/// signers start for these transactions would never be worked on by the coordinator.
+fn report_planned_transactions<S: ScannerFeed>(
+  txn: &mut impl DbTxn,
+  keys: &[SeraiKey<KeyFor<S>>],
+  new_eventualities: &HashMap<Vec<u8>, Vec<EventualityFor<S>>>,
+) {
+  let mut plans = Vec::with_capacity(new_eventualities.len());
+  for key in keys {
+    let Some(eventualities) = new_eventualities.get(key.key.to_bytes().as_ref()) else { continue };
+    for eventuality in eventualities {
+      plans.push(messages::substrate::PlanMeta {
+        session: key.session,
+        transaction_plan_id: eventuality.id(),
+      });
+    }
+  }
+  assert_eq!(
+    plans.len(),
+    new_eventualities.values().map(Vec::len).sum::<usize>(),
+    "reporting Eventualities for a key which isn't active",
+  );
+  if plans.is_empty() {
+    return;
+  }
+  SubstrateBlockAcks::send(txn, plans);
 }
 
 /// Intake a set of Eventualities into the DB.
@@ -163,7 +194,7 @@ impl<
       // We always intake Burns per this block as it's the block we have consensus on
       // We would have a consensus failure if some thought the change should be the old key and
       // others the new key
-      let (_keys, keys_with_stages) = self.keys_and_keys_with_stages(latest_handled_notable_block);
+      let (keys, keys_with_stages) = self.keys_and_keys_with_stages(latest_handled_notable_block);
 
       let block = self.feed.block_by_number(&self.db, latest_handled_notable_block).await?;
 
@@ -187,6 +218,7 @@ impl<
           )
           .await
           .map_err(|e| format!("failed to queue fulfilling payments: {e:?}"))?;
+        report_planned_transactions::<S>(&mut txn, &keys, &new_eventualities);
         intake_eventualities::<S>(&mut txn, new_eventualities);
       }
       txn.commit();
@@ -474,6 +506,7 @@ impl<
                 .find(|serai_key| serai_key.key.to_bytes().as_ref() == key.as_slice())
                 .expect("intaking Eventuality for key which isn't active");
             }
+            report_planned_transactions::<S>(&mut txn, &keys, &new_eventualities);
             intake_eventualities::<S>(&mut txn, new_eventualities);
           }
         }
@@ -491,6 +524,7 @@ impl<
               .flush_key(&mut txn, &block, key.key, keys.last().unwrap().key)
               .await
               .map_err(|e| format!("failed to flush key from scheduler: {e:?}"))?;
+            report_planned_transactions::<S>(&mut txn, &keys, &new_eventualities);
             intake_eventualities::<S>(&mut txn, new_eventualities);
           }
 

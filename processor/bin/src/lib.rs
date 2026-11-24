@@ -186,6 +186,30 @@ pub async fn main_loop<
   let mut signers =
     Signers::<Db, S, Sch, _>::new::<K>(db.clone(), coordinator.coordinator_send(), publisher);
 
+  /*
+    Forward the scanner's `SubstrateBlockAck`s, which report the IDs of the transactions planned,
+    to the coordinator, which requires them to recognize the transactions' signing protocols.
+
+    If we reboot after sending one but before committing its receipt, we send it again. The
+    coordinator then provides the same `Transaction::SubstrateBlock` again, which its Tributary
+    already has, and that's accepted (`MempoolError::AlreadyPresent`).
+  */
+  tokio::spawn({
+    let mut db = db.clone();
+    let mut coordinator_send = coordinator.coordinator_send();
+    async move {
+      loop {
+        loop {
+          let mut txn = db.txn();
+          let Some(ack) = scanner::SubstrateBlockAcks::try_recv(&mut txn) else { break };
+          coordinator_send.send_message(&messages::ProcessorMessage::Substrate(ack));
+          txn.commit();
+        }
+        tokio::time::sleep(core::time::Duration::from_secs(1)).await;
+      }
+    }
+  });
+
   loop {
     let db_clone = db.clone();
     let mut txn = db.txn();

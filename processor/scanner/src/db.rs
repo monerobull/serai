@@ -3,6 +3,8 @@ use std::io::{self, Read as _, Write as _};
 
 use group::GroupEncoding;
 
+use blake2::{digest::typenum::U32, Digest as _, Blake2b};
+
 use borsh::{BorshSerialize, BorshDeserialize};
 use serai_db::{Get, Transaction as DbTxn};
 
@@ -597,11 +599,18 @@ impl SubstrateToEventualityDb {
 mod _public_db {
   use serai_primitives::instructions::Batch;
 
+  serai_db::schema! {
+    ScannerPublic {
+      SubstrateBlockAckIndex: () -> u64,
+    }
+  }
+
   serai_db::channel! {
     ScannerPublic {
       BatchesToSign: (key: &[u8]) -> Batch,
       AcknowledgedBatches: (key: &[u8]) -> u32,
       CompletedEventualities: (key: &[u8]) -> [u8; 32],
+      SubstrateBlockAcks: () -> messages::substrate::ProcessorMessage,
     }
   }
 }
@@ -644,5 +653,83 @@ impl<K: GroupEncoding> CompletedEventualities<K> {
   /// Receive the ID of a completed Eventuality.
   pub fn try_recv(txn: &mut impl DbTxn, key: &K) -> Option<[u8; 32]> {
     _public_db::CompletedEventualities::try_recv(txn, key.to_bytes().as_ref())
+  }
+}
+
+/// The `SubstrateBlockAck`s to forward to the coordinator.
+///
+/// These report the IDs of the transactions planned, enabling the coordinator to recognize their
+/// signing protocols.
+pub struct SubstrateBlockAcks;
+impl SubstrateBlockAcks {
+  pub(crate) fn send(txn: &mut impl DbTxn, plans: Vec<messages::substrate::PlanMeta>) {
+    let index = _public_db::SubstrateBlockAckIndex::get(txn).unwrap_or(0);
+    _public_db::SubstrateBlockAckIndex::set(txn, &(index + 1));
+
+    /*
+      The transactions to sign are planned by a series of events (Burns being intaked, outputs
+      being accumulated upon a block's acknowledgement, a retiring key being flushed) which all
+      validators process identically and in an identical order (as necessary for the produced
+      transactions to be signable by a threshold of validators at all). Accordingly, deriving this
+      ID from an index incremented on each planning event yields an ID consistent across all
+      validators. The coordinator solely uses it to correlate each validator's local view of the
+      plans with the `Transaction::SubstrateBlock` provided on the Tributary, so it doesn't have to
+      be an actual Substrate block hash.
+    */
+    let mut id_preimage = b"serai-processor-scanner-substrate-block-ack".to_vec();
+    id_preimage.extend(index.to_le_bytes());
+    let block: [u8; 32] = Blake2b::<U32>::digest(&id_preimage).into();
+
+    _public_db::SubstrateBlockAcks::send(
+      txn,
+      &messages::substrate::ProcessorMessage::SubstrateBlockAck { block, plans },
+    );
+  }
+
+  /// Receive a `SubstrateBlockAck` to forward to the coordinator.
+  pub fn try_recv(txn: &mut impl DbTxn) -> Option<messages::substrate::ProcessorMessage> {
+    _public_db::SubstrateBlockAcks::try_recv(txn)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use serai_db::{Db as _, MemDb};
+
+  use messages::substrate::{PlanMeta, ProcessorMessage};
+
+  use super::*;
+
+  fn plan(session: u32, id: u8) -> PlanMeta {
+    PlanMeta { session: Session(session), transaction_plan_id: [id; 32] }
+  }
+
+  // Each validator's processor, planning the same transactions in the same order, sends the
+  // same acknowledgements, each with its own ID
+  fn acks() -> Vec<([u8; 32], Vec<PlanMeta>)> {
+    let mut db = MemDb::new();
+    let mut txn = db.txn();
+    SubstrateBlockAcks::send(&mut txn, vec![plan(0, 1), plan(0, 2)]);
+    SubstrateBlockAcks::send(&mut txn, vec![plan(1, 3)]);
+    txn.commit();
+
+    let mut txn = db.txn();
+    let mut acks = vec![];
+    while let Some(ack) = SubstrateBlockAcks::try_recv(&mut txn) {
+      let ProcessorMessage::SubstrateBlockAck { block, plans } = ack;
+      acks.push((block, plans));
+    }
+    txn.commit();
+    acks
+  }
+
+  #[test]
+  fn substrate_block_acks_are_consistent_across_validators() {
+    let ours = acks();
+    assert_eq!(ours.len(), 2);
+    assert_eq!(ours[0].1, vec![plan(0, 1), plan(0, 2)]);
+    assert_eq!(ours[1].1, vec![plan(1, 3)]);
+    assert_ne!(ours[0].0, ours[1].0);
+    assert_eq!(ours, acks());
   }
 }
