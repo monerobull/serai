@@ -132,3 +132,36 @@ impl Lifetime {
     }
   }
 }
+
+/// The most recent key which is reporting.
+///
+/// If no key is reporting, the most recent key is returned. This occurs at genesis, when the sole
+/// key is still within its `ActiveYetNotReporting` window.
+pub(crate) fn latest_active_key<K: Copy>(keys_with_stages: &[(K, LifetimeStage)]) -> K {
+  keys_with_stages
+    .iter()
+    .rev()
+    .find(|(_key, stage)| *stage != LifetimeStage::ActiveYetNotReporting)
+    .or(keys_with_stages.last())
+    .expect("no active keys")
+    .0
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn latest_active_key_at_genesis_and_after() {
+    use LifetimeStage::*;
+
+    // At genesis, the sole key isn't reporting yet, and is still the latest active key
+    assert_eq!(latest_active_key(&[(1u8, ActiveYetNotReporting)]), 1);
+    assert_eq!(latest_active_key(&[(1u8, Active)]), 1);
+    // A new key which isn't reporting yet isn't the latest active key
+    assert_eq!(latest_active_key(&[(1u8, Active), (2, ActiveYetNotReporting)]), 1);
+    // Once it reports, it is
+    assert_eq!(latest_active_key(&[(1u8, UsingNewForChange), (2, Active)]), 2);
+    assert_eq!(latest_active_key(&[(1u8, Forwarding), (2, Active)]), 2);
+  }
+}

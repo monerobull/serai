@@ -13,7 +13,7 @@ use serai_primitives::{
 use primitives::{task::ContinuallyRan, OutputType, ReceivedOutput as _, Block as _};
 
 use crate::{
-  lifetime::LifetimeStage,
+  lifetime::{LifetimeStage, latest_active_key},
   db::{
     OutputWithInInstruction, Returnable, SenderScanData, ScannerGlobalDb, InInstructionData,
     ScanToBatchDb, ScanToEventualityDb,
@@ -121,18 +121,8 @@ impl<D: 'static + Send + Sync + for<'db> Db<Transaction<'db>: Send>, S: ScannerF
         let keys = ScannerGlobalDb::<S>::active_keys_as_of_next_to_scan_for_outputs_block(&txn)
           .expect("scanning for a blockchain without any keys set");
 
-        let latest_active_key = {
-          let mut keys = keys.clone();
-          loop {
-            // Use the most recent key
-            let key = keys.pop().unwrap();
-            // Unless this key is active, but not yet reporting
-            if key.stage == LifetimeStage::ActiveYetNotReporting {
-              continue;
-            }
-            break key.key;
-          }
-        };
+        let latest_active_key =
+          latest_active_key(&keys.iter().map(|key| (key.key, key.stage)).collect::<Vec<_>>());
 
         // The scan data for this block
         let mut scan_data = SenderScanData {
