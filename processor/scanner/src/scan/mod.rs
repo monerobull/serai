@@ -102,9 +102,14 @@ impl<D: 'static + Send + Sync + for<'db> Db<Transaction<'db>: Send>, S: ScannerF
 
   fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async move {
-      // Fetch the safe to scan block
-      let latest_scannable =
-        latest_scannable_block::<S>(&self.db).expect("ScanTask run before writing the start block");
+      // Fetch the safe to scan block, clamped to the latest indexed block: a block past it has no
+      // ID saved, and `block_by_number` panics for it
+      let latest_scannable = latest_scannable_block::<S>(&self.db)
+        .expect("ScanTask run before writing the start block")
+        .min(
+          crate::index::latest_finalized_block(&self.db)
+            .expect("ScanTask run before writing the start block"),
+        );
       // Fetch the next block to scan
       let next_to_scan = ScanDb::<S>::next_to_scan_for_outputs_block(&self.db)
         .expect("ScanTask run before writing the start block");
