@@ -7335,6 +7335,7 @@ dependencies = [
  "serai-processor-utxo-scheduler-primitives",
  "tokio",
  "zalloc",
+ "zeroize",
 ]
 
 [[package]]

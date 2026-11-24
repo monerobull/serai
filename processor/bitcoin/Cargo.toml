@@ -51,6 +51,9 @@ signers = { package = "serai-processor-signers", path = "../signers" }
 
 bin = { package = "serai-processor-bin", path = "../bin" }
 
+[dev-dependencies]
+zeroize = { version = "1", default-features = false, features = ["std"] }
+
 [features]
 parity-db = ["bin/parity-db"]
 rocksdb = ["bin/rocksdb"]
