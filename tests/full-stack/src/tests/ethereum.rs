@@ -69,7 +69,7 @@ const RELAY_INTERVAL: Duration = Duration::from_secs(5);
 /// The processors scan from the first epoch after the time the key was set. The Router must be
 /// deployed within a scanned epoch (its constructor's event is what triggers confirming the key),
 /// so its deployment waits past any clock skew between the nodes.
-const ROUTER_DEPLOYMENT_DELAY: Duration = Duration::from_secs(60);
+const ROUTER_DEPLOYMENT_DELAY: Duration = Duration::from_mins(1);
 
 mod abi {
   alloy_sol_macro::sol! {
@@ -216,7 +216,7 @@ async fn publish(provider: &RootProvider, tx: Signed<TxLegacy>) -> Result<(), St
     .send_raw_transaction(&bytes)
     .await
     .map_err(|e| format!("couldn't publish the transaction: {e:?}"))?;
-  let receipt = tokio::time::timeout(Duration::from_secs(120), pending.get_receipt())
+  let receipt = tokio::time::timeout(Duration::from_mins(2), pending.get_receipt())
     .await
     .map_err(|_| "timed out waiting for the transaction's receipt".to_owned())?
     .map_err(|e| format!("couldn't fetch the transaction's receipt: {e:?}"))?;

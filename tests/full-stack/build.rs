@@ -1,6 +1,7 @@
 use std::{env, fs};
 
 fn main() {
+  #[expect(clippy::disallowed_methods)]
   let artifacts_path = env::var("OUT_DIR").unwrap() + "/serai-full-stack-tests";
   if !fs::exists(&artifacts_path).unwrap() {
     fs::create_dir_all(&artifacts_path).unwrap();

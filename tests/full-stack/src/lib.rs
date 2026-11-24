@@ -89,7 +89,7 @@ impl Handles {
     &self,
     ops: &DockerOperations,
   ) -> monero_simple_request_rpc::prelude::MoneroDaemon<SimpleRequestTransport> {
-    use monero_simple_request_rpc::prelude::ProvidesBlockchainMeta;
+    use monero_simple_request_rpc::prelude::ProvidesBlockchainMeta as _;
 
     let rpc = ops.handle(&self.monero.0).host_port(self.monero.1).unwrap();
     let rpc = format!("http://{RPC_USER}:{RPC_PASS}@{}:{}", rpc.0, rpc.1);

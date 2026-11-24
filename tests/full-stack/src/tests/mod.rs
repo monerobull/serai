@@ -79,6 +79,7 @@ pub(crate) async fn new_test(test_body: impl TestBody) {
           .set_start_policy(StartPolicy::Strict)
           .set_handle(handle.clone())
           .set_log_options(Some(LogOptions {
+            #[expect(clippy::disallowed_methods)]
             action: if std::env::var("GITHUB_CI") == Ok("true".to_owned()) {
               LogAction::Forward
             } else {
@@ -175,6 +176,7 @@ pub(crate) async fn new_test(test_body: impl TestBody) {
           .set_start_policy(StartPolicy::Strict)
           .set_handle(handle.clone())
           .set_log_options(Some(LogOptions {
+            #[expect(clippy::disallowed_methods)]
             action: if std::env::var("GITHUB_CI") == Ok("true".to_owned()) {
               LogAction::Forward
             } else {
@@ -271,13 +273,11 @@ pub(crate) async fn new_test(test_body: impl TestBody) {
       // Check if there is a coordinator left
       let maybe_coordinator = {
         let mut remaining = pending_coordinator_compositions.lock().await;
-        let maybe_coordinator = if !remaining.is_empty() {
+        let maybe_coordinator = (!remaining.is_empty()).then(|| {
           let handles = handles[handles.len() - remaining.len()].clone();
           let composition = remaining.remove(0);
-          Some((composition, handles))
-        } else {
-          None
-        };
+          (composition, handles)
+        });
         drop(remaining);
         maybe_coordinator
       };

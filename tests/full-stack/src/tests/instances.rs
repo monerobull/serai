@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use rand_core::OsRng;
 
 use ciphersuite::{
-  group::{ff::PrimeField, GroupEncoding},
+  group::{ff::PrimeField as _, GroupEncoding as _},
   WrappedGroup, WithPreferredHash,
 };
 use dalek_ff_group::Ristretto;
@@ -23,7 +23,7 @@ use crate::{RPC_USER, RPC_PASS};
 
 // This is for test only.
 fn insecure_arbitrary_key_from_name<C: WithPreferredHash>(name: &str) -> C::F {
-  C::hash_to_F(&[b"insecure arbitrary key".as_slice(), name.as_bytes()].concat())
+  C::hash_to_F([b"insecure arbitrary key".as_slice(), name.as_bytes()].concat())
 }
 
 fn insecure_keypair_from_name(name: &str) -> Pair {
@@ -115,7 +115,7 @@ pub fn processor_instance(
       ("MESSAGE_QUEUE_KEY".to_owned(), hex::encode(message_queue_key.to_repr())),
       ("SUBSTRATE_EVRF_KEY".to_owned(), hex::encode(substrate_evrf_key)),
       ("NETWORK_EVRF_KEY".to_owned(), hex::encode(network_evrf_key)),
-      ("NETWORK".to_owned(), network_str.to_string()),
+      ("NETWORK".to_owned(), network_str.to_owned()),
       ("NETWORK_RPC_LOGIN".to_owned(), format!("{RPC_USER}:{RPC_PASS}")),
       ("NETWORK_RPC_PORT".to_owned(), port.to_string()),
       ("DB_PATH".to_owned(), "./processor-db".to_owned()),

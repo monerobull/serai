@@ -35,7 +35,7 @@ const MONERO_MINING_ADDRESS: &str =
 const INITIAL_BLOCKS: usize = 100;
 
 /// The interval between blocks mined on each network.
-const BLOCK_INTERVAL: Duration = Duration::from_secs(60);
+const BLOCK_INTERVAL: Duration = Duration::from_mins(1);
 
 /// The amount of blocks initially mined on Ethereum: one epoch, plus the two it takes for anvil
 /// to consider it finalized.

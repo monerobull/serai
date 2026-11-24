@@ -131,7 +131,8 @@ fn musig_sign(set: ValidatorSet, pairs: &[Pair], msg: &[u8]) -> RistrettoSignatu
 
 /// Oraclize the genesis values, ending the genesis period and initializing the pools.
 async fn oraclize_values(serai: &Serai) {
-  let values = GenesisValues { ether: Amount(3097630), dai: Amount(1417), monero: Amount(488472) };
+  let values =
+    GenesisValues { ether: Amount(3_097_630), dai: Amount(1417), monero: Amount(488_472) };
   let set = ValidatorSet { network: NetworkId::Serai, session: Session(0) };
   let pairs = dev_pairs_in_genesis_order();
 
@@ -187,7 +188,7 @@ pub(crate) async fn complete_genesis(serai: &Serai) {
 
   // wait for genesis time to complete
   {
-    const GENESIS_LIQUIDITY_TIME: Duration = Duration::from_secs(5 * 60 * 60);
+    const GENESIS_LIQUIDITY_TIME: Duration = Duration::from_hours(5);
 
     let genesis_time = Duration::from_millis(
       serai.block_by_number(1).await.unwrap().unwrap().header.unix_time_in_millis(),
