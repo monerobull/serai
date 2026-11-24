@@ -236,8 +236,16 @@ pub async fn main_loop<
           let key =
             EncodableG(K::decode_key(key_pair.1.as_ref()).expect("invalid key set on serai"));
 
-          // Queue the key to be activated upon the next Batch
-          KeyToActivate::<KeyFor<S>>::send(txn, &key);
+          /*
+            Queue the key to be activated upon the next Batch.
+
+            The first key is instead queued, for activation at the start block, by
+            `Scanner::initialize` below. Queueing it here too would have the scanner queue it a
+            second time upon the first acknowledged Batch, which it asserts against.
+          */
+          if session != Session(0) {
+            KeyToActivate::<KeyFor<S>>::send(txn, &key);
+          }
 
           // Set the external key, as needed by the signers
           ExternalKeyForSessionForSigners::<KeyFor<S>>::set(txn, session, &key);
