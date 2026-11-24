@@ -356,13 +356,16 @@ impl<S: ScannerFeed, P: TransactionPlanner<S, ()>> SchedulerTrait<S> for Schedul
   type EphemeralError = P::EphemeralError;
   type SignableTransaction = P::SignableTransaction;
 
-  fn activate_key(txn: &mut impl DbTxn, key: KeyFor<S>) {
+  fn activate_key(&self, txn: &mut impl DbTxn, key: KeyFor<S>) -> KeyScopedEventualities<S> {
     for coin in S::NETWORK.coins() {
       assert!(Db::<S>::outputs(txn, key, coin).is_none());
       Db::<S>::set_outputs(txn, key, coin, &[]);
       assert!(Db::<S>::queued_payments(txn, key, coin).is_none());
       Db::<S>::set_queued_payments(txn, key, coin, &[]);
     }
+
+    // Activating a key plans no transactions for a UTXO scheme
+    KeyScopedEventualities::<S>::new()
   }
 
   fn flush_key(
