@@ -41,7 +41,8 @@ async fn validator_sets() {
       {
         use sp_core::{Pair as _, sr25519::Pair};
         let genesis_validators = vec![(
-          SeraiAddress::from(Pair::from_seed(&sp_crypto_hashing::blake2_256(b"//Alice")).public()),
+          // Testing only: dev genesis's account for Alice is her auxiliary key's public key
+          SeraiAddress::from(Pair::from_string("//Alice", None).unwrap().public()),
           KeyShares::ONE,
         )];
 

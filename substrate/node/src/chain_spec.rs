@@ -38,8 +38,11 @@ use serai_env::Environment;
 /// This is insecure and MUST NOT be used except testing purposes.
 ///
 /// Note the development seed itself is used as the _auxiliary key_ used to operate the node with.
+///
+/// Testing only: the validator is that key's public key too, the account dev genesis gives it
+/// (`insecure_account_from_name`).
 pub(super) fn validator_identity_for_dev_seed(dev_seed: &str) -> SeraiAddress {
-  Pair::from_seed(&sp_crypto_hashing::blake2_256(dev_seed.as_bytes())).public().into()
+  Pair::from_string(dev_seed, None).expect("dev key had invalid seed").public().into()
 }
 
 /// Create an insecure key pair from a name alone.
@@ -52,8 +55,15 @@ fn insecure_keypair_from_name(name: &'static str) -> Pair {
 /// Create an insecure Serai address (with known private key) from a name alone.
 ///
 /// This will have effectively no entropy and MUST NOT be used except for testing purposes.
+///
+/// Testing only: the account is the public key of `insecure_keypair_from_name`, the key the
+/// validator's Serai auxiliary key is (`insecure_auxiliary_keys`). The coordinator holds that key
+/// alone and takes its public key as its validator's account: it looks for itself in a decided
+/// set's validators by it, and signs the set's keys as a musig of the validators' accounts, which
+/// the chain checks against their auxiliary keys. An account of another key leaves every
+/// coordinator outside every set, and no key generation starts.
 fn insecure_account_from_name(name: &'static str) -> SeraiAddress {
-  Pair::from_seed(&sp_crypto_hashing::blake2_256(format!("//{name}").as_bytes())).public().into()
+  insecure_keypair_from_name(name).public().into()
 }
 
 /// Create an insecure key for a curve from a name alone, which whoever runs the validator's
