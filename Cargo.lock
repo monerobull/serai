@@ -7732,6 +7732,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "serai-full-stack-tests"
+version = "0.1.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-core",
+ "alloy-provider",
+ "alloy-rlp",
+ "alloy-rpc-client",
+ "alloy-rpc-types-eth",
+ "alloy-simple-request-transport",
+ "alloy-sol-macro",
+ "alloy-sol-types",
+ "async-trait",
+ "bitcoin-serai",
+ "bitvec",
+ "build-solidity-contracts",
+ "ciphersuite 0.4.2",
+ "ciphersuite-kp256",
+ "curve25519-dalek 4.1.3",
+ "dalek-ff-group",
+ "dockertest",
+ "embedwards25519",
+ "ethereum-schnorr-contract",
+ "frost-schnorrkel",
+ "hex",
+ "modular-frost",
+ "monero-simple-request-rpc",
+ "monero-wallet",
+ "musig",
+ "parity-scale-codec",
+ "rand_core 0.6.4",
+ "secq256k1",
+ "serai-client-serai",
+ "serai-docker-tests",
+ "serai-ethereum-test-primitives",
+ "serai-processor-ethereum-deployer",
+ "serai-processor-ethereum-primitives",
+ "serai-processor-ethereum-router",
+ "serde",
+ "serde_json",
+ "sp-application-crypto",
+ "sp-core",
+ "tokio",
+ "zeroize",
+]
+
+[[package]]
 name = "serai-genesis-liquidity-pallet"
 version = "0.1.0"
 dependencies = [

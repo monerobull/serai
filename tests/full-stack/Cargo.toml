@@ -51,8 +51,8 @@ ethereum-primitives = { package = "serai-processor-ethereum-primitives", path = 
 ethereum-deployer = { package = "serai-processor-ethereum-deployer", path = "../../processor/ethereum/deployer" }
 ethereum-router = { package = "serai-processor-ethereum-router", path = "../../processor/ethereum/router" }
 ethereum-test-primitives = { package = "serai-ethereum-test-primitives", path = "../../processor/ethereum/test-primitives" }
-monero-simple-request-rpc = { git = "https://github.com/monero-oxide/monero-oxide", rev = "c8be5d3d1287669946a83fbfcb296ce2a8852e47" }
-monero-wallet = { git = "https://github.com/monero-oxide/monero-oxide", rev = "c8be5d3d1287669946a83fbfcb296ce2a8852e47" }
+monero-simple-request-rpc = { version = "0.1", default-features = false }
+monero-wallet = { version = "0.2", default-features = false, features = ["std"] }
 
 scale = { package = "parity-scale-codec", version = "3" }
 serde = "1"

@@ -74,17 +74,14 @@ async fn publish_tx(serai: &Serai, tx: &Transaction) -> BlockHash {
 fn musig_sign(set: ValidatorSet, pairs: &[Pair], msg: &[u8]) -> RistrettoSignature {
   let mut pub_keys = vec![];
   for pair in pairs {
-    let public_key =
-      <Ristretto as GroupIo>::read_G::<&[u8]>(&mut pair.public().0.as_ref()).unwrap();
+    let public_key = <Ristretto as GroupIo>::read_G(&pair.public().0[..]).unwrap();
     pub_keys.push(public_key);
   }
 
   let mut musig_keys = HashMap::new();
   for i in 0 .. pairs.len() {
-    let secret_key = <Ristretto as GroupIo>::read_F::<&[u8]>(
-      &mut pairs[i].as_ref().secret.to_bytes()[.. 32].as_ref(),
-    )
-    .unwrap();
+    let secret_key =
+      <Ristretto as GroupIo>::read_F(&pairs[i].as_ref().secret.to_bytes()[.. 32]).unwrap();
     assert_eq!(Ristretto::generator() * secret_key, pub_keys[i]);
 
     let keys =
@@ -190,7 +187,7 @@ pub(crate) async fn complete_genesis(serai: &Serai) {
 
   // wait for genesis time to complete
   {
-    const GENESIS_LIQUIDITY_TIME: Duration = HOUR.checked_mul(5).unwrap();;
+    const GENESIS_LIQUIDITY_TIME: Duration = Duration::from_secs(5 * 60 * 60);
 
     let genesis_time = Duration::from_millis(
       serai.block_by_number(1).await.unwrap().unwrap().header.unix_time_in_millis(),
