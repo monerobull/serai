@@ -174,6 +174,11 @@ pub fn build(name: String) {
           meta(repo_path.join("message-queue")),
           meta(repo_path.join("coordinator")),
         ],
+        "secret-store" => vec![
+          meta(repo_path.join("common")),
+          meta(repo_path.join("crypto")),
+          meta(repo_path.join("secret-store")),
+        ],
         "runtime" | "serai" => vec![
           meta(repo_path.join("common")),
           meta(repo_path.join("crypto")),
