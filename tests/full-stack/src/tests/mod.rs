@@ -94,6 +94,18 @@ pub(crate) async fn new_test(test_body: impl TestBody) {
     (bitcoin_handle, bitcoin_port, ethereum_handle, ethereum_port, monero_handle, monero_port)
   };
 
+  // Testing only: a `testnet`-feature node panics at start without `SERAI_TEST_ACCOUNT`,
+  // so read it once here and pass the same address to every validator's node container.
+  #[expect(clippy::disallowed_methods)]
+  let test_account = std::env::var("SERAI_TEST_ACCOUNT")
+    .ok()
+    .map(|value| value.trim().to_owned())
+    .filter(|value| !value.is_empty())
+    .expect(
+      "set SERAI_TEST_ACCOUNT to the test network's own Serai address (never a development \
+       account)",
+    );
+
   for i in 0 .. VALIDATORS {
     let name = match i {
       0 => "Alice",
@@ -146,7 +158,7 @@ pub(crate) async fn new_test(test_body: impl TestBody) {
     let monero_processor_composition = monero_processor_composition.swap_remove(0);
 
     let (coordinator_composition, coordinator_variables) = coordinator_instance(name, coord_key);
-    let serai_composition = serai_composition(name);
+    let serai_composition = serai_composition(name, u32::try_from(i).unwrap(), &test_account);
 
     // Testing only: every service but the node takes its environment from a Secret Store, which
     // dials each one it serves on port 59119 (`secret-store/README.md`). One serves this

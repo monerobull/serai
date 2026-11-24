@@ -27,7 +27,6 @@ use serai_client_serai::{
     Call, Transaction,
     genesis_liquidity::Call as GenesisLiquidityCall,
     primitives::{
-      BlockHash,
       balance::Amount,
       coin::ExternalCoin,
       crypto::RistrettoSignature,
@@ -51,24 +50,69 @@ fn dev_pairs_in_genesis_order() -> Vec<Pair> {
   VALIDATOR_NAMES.iter().map(|name| insecure_pair_from_name(name)).collect()
 }
 
-/// Publish a transaction, yielding the hash of the block which included it.
-async fn publish_tx(serai: &Serai, tx: &Transaction) -> BlockHash {
-  serai.publish_transaction(tx).await.unwrap();
-
-  // Get the block it was included in
-  for _ in 0 .. 60 {
-    tokio::time::sleep(Duration::from_secs(1)).await;
-
-    let latest = serai.latest_finalized_block_number().await.unwrap();
-    let block = serai.block_by_number(latest).await.unwrap().unwrap();
-
-    for transaction in &block.transactions {
-      if transaction == tx {
-        return block.header.hash();
+/// Ask Serai's node until it answers, saying so each time it doesn't. One failed answer used to
+/// stop the test, and the test's teardown removes the whole network (specification 32).
+async fn ask<T, E: core::fmt::Debug, F: core::future::Future<Output = Result<T, E>>>(
+  what: &str,
+  mut question: impl FnMut() -> F,
+) -> T {
+  loop {
+    match question().await {
+      Ok(answer) => return answer,
+      Err(e) => {
+        println!("Serai's node didn't answer {what} ({e:?}); trying again in 5s");
+        tokio::time::sleep(Duration::from_secs(5)).await;
       }
     }
   }
-  panic!("transaction wasn't included in a finalized block within 60 seconds");
+}
+
+/// Whether genesis completed, asked until the node answers.
+#[expect(closure_returning_async_block)]
+async fn genesis_completed(serai: &Serai) -> bool {
+  ask("whether genesis completed", move || async move {
+    serai.state().await?.genesis_completed().await
+  })
+  .await
+}
+
+/// The time of the latest finalized block, asked until the node answers.
+#[expect(closure_returning_async_block)]
+async fn latest_time(serai: &Serai) -> Duration {
+  ask("the latest finalized block's time", move || async move {
+    let latest = serai.latest_finalized_block_number().await.map_err(|e| format!("{e:?}"))?;
+    let block = serai
+      .block_by_number(latest)
+      .await
+      .map_err(|e| format!("{e:?}"))?
+      .ok_or_else(|| format!("no block {latest}"))?;
+    Ok::<_, String>(Duration::from_millis(block.header.unix_time_in_millis()))
+  })
+  .await
+}
+
+/// Publish the opening until a finalized block includes it, or genesis has completed.
+///
+/// A refusal or a slow block is logged and published again, as an unsigned transaction stays valid
+/// until a block includes it. Genesis completing, by this or by a copy published by hand, ends it.
+async fn publish_tx(serai: &Serai, tx: &Transaction) {
+  loop {
+    if genesis_completed(serai).await {
+      return;
+    }
+    if let Err(e) = serai.publish_transaction(tx).await {
+      println!("Serai's node didn't take the transaction ({e:?}); looking again for 60s");
+    }
+    for _ in 0 .. 60 {
+      tokio::time::sleep(Duration::from_secs(1)).await;
+      let Ok(latest) = serai.latest_finalized_block_number().await else { continue };
+      let Ok(Some(block)) = serai.block_by_number(latest).await else { continue };
+      if block.transactions.iter().any(|transaction| transaction == tx) {
+        return;
+      }
+    }
+    println!("The transaction wasn't in a finalized block within 60 seconds; publishing it again");
+  }
 }
 
 fn musig_sign(set: ValidatorSet, pairs: &[Pair], msg: &[u8]) -> RistrettoSignature {
@@ -160,9 +204,12 @@ async fn oraclize_values(serai: &Serai) {
 /// Complete the genesis liquidity period.
 ///
 /// This waits for real genesis liquidity deposits on every external network, and then oraclizes
-/// the genesis values (initializing the pools).
+/// the genesis values (initializing the pools). Every question to Serai's node is retried until
+/// answered, and genesis completion is checked again just before publishing the opening
+/// (specification 32).
+#[expect(closure_returning_async_block)]
 pub(crate) async fn complete_genesis(serai: &Serai) {
-  if serai.state().await.unwrap().genesis_completed().await.unwrap() {
+  if genesis_completed(serai).await {
     println!("Genesis already completed.");
     return;
   }
@@ -171,12 +218,15 @@ pub(crate) async fn complete_genesis(serai: &Serai) {
     "Waiting for BTC, ETH, DAI and XMR genesis liquidity deposits before oraclizing values..."
   );
   loop {
-    let state = serai.state().await.unwrap();
     let mut all_deposited = true;
     for coin in
       [ExternalCoin::Bitcoin, ExternalCoin::Ether, ExternalCoin::Dai, ExternalCoin::Monero]
     {
-      if state.genesis_liquidity_supply(coin).await.unwrap().0 == 0 {
+      let supply = ask("a coin's genesis liquidity", move || async move {
+        serai.state().await?.genesis_liquidity_supply(coin).await
+      })
+      .await;
+      if supply.0 == 0 {
         all_deposited = false;
       }
     }
@@ -190,17 +240,16 @@ pub(crate) async fn complete_genesis(serai: &Serai) {
   {
     const GENESIS_LIQUIDITY_TIME: Duration = Duration::from_hours(5);
 
-    let genesis_time = Duration::from_millis(
-      serai.block_by_number(1).await.unwrap().unwrap().header.unix_time_in_millis(),
-    );
-    let end_of_genesis = genesis_time.checked_add(GENESIS_LIQUIDITY_TIME).unwrap();
-
-    async fn latest_time(serai: &Serai) -> Duration {
-      let latest = serai.latest_finalized_block_number().await.unwrap();
-      Duration::from_millis(
-        serai.block_by_number(latest).await.unwrap().unwrap().header.unix_time_in_millis(),
-      )
-    }
+    let genesis_time = ask("block 1's time", move || async move {
+      let block = serai
+        .block_by_number(1)
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or_else(|| "no block 1 yet".to_owned())?;
+      Ok::<_, String>(Duration::from_millis(block.header.unix_time_in_millis()))
+    })
+    .await;
+    let end_of_genesis = genesis_time.saturating_add(GENESIS_LIQUIDITY_TIME);
 
     let remaining = end_of_genesis.saturating_sub(latest_time(serai).await);
     if !remaining.is_zero() {
@@ -211,17 +260,44 @@ pub(crate) async fn complete_genesis(serai: &Serai) {
     }
   }
 
+  // Someone may have published the opening by hand meanwhile: Serai would refuse a second as stale
+  if genesis_completed(serai).await {
+    println!("Genesis already completed.");
+    return;
+  }
+
   println!("Oraclizing genesis values...");
   oraclize_values(serai).await;
 
   // `oraclize_values`' dispatch may fail even when its `validate_unsigned` passes, so confirm
-  // genesis actually completed
-  for _ in 0 .. 10 {
-    if serai.state().await.unwrap().genesis_completed().await.unwrap() {
+  // genesis actually completed. Where it doesn't, the network stays up for someone to read why.
+  let mut waited = 0u64;
+  loop {
+    if genesis_completed(serai).await {
       println!("Genesis completed. Pools are initialized.");
       return;
     }
     tokio::time::sleep(Duration::from_secs(3)).await;
+    waited += 3;
+    if waited.is_multiple_of(30) {
+      println!(
+        "`oraclize_values` was published {waited}s ago, yet genesis hasn't completed. Read Serai's \
+         events for the call's error. Still waiting."
+      );
+    }
   }
-  panic!("`oraclize_values` was published yet genesis didn't complete");
+}
+
+/// The genesis step by hand, for a network whose harness stopped and left its containers running
+/// (specification 32): run against the running network's first node (`SERAI_RPC_URL`, or
+/// `http://127.0.0.1:9944`), starting no containers. Ignored, so the crate's tests never reach a
+/// live node: `cargo test -p serai-full-stack-tests publish_opening -- --ignored --nocapture`.
+#[tokio::test]
+#[ignore = "hand tool: connects to a running Serai node"]
+async fn publish_opening() {
+  #[expect(clippy::disallowed_methods)]
+  let url =
+    std::env::var("SERAI_RPC_URL").unwrap_or_else(|_| "http://127.0.0.1:9944".to_owned());
+  let serai = Serai::new(url).expect("couldn't make a client of Serai's node");
+  complete_genesis(&serai).await;
 }
