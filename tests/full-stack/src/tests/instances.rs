@@ -66,8 +66,14 @@ pub fn coordinator_instance(
   .replace_env(
     [(
       "RUST_LOG".to_owned(),
-      "serai_coordinator=trace,".to_owned() +
-        "serai-coordinator-libp2p-p2p=trace," +
+      // Testing only: `info` for every target the rest don't name, as env_logger logs nothing for
+      // a target no directive names. Without it, a task's error (`serai_task`) and the cosigning's
+      // lines were dropped, and a coordinator that never began a key generation said nothing.
+      // `serai_coordinator` names the `serai_coordinator_*` crates too, the libp2p one among them.
+      "info,".to_owned() +
+        "serai_coordinator=trace," +
+        "serai_cosign=debug," +
+        "serai_task=debug," +
         "tributary_chain=trace," +
         "tendermint=trace",
     )]
@@ -175,7 +181,8 @@ pub fn processor_instance(
           .pull_policy(PullPolicy::Never),
       )
       .replace_env(
-        [("RUST_LOG".to_owned(), "serai_ethereum_relayer=trace,".to_owned())].into(),
+        // Testing only: `info` for every target the other doesn't name, as the coordinator's
+        [("RUST_LOG".to_owned(), "info,serai_ethereum_relayer=trace".to_owned())].into(),
       )
       .set_publish_all_ports(true),
     );
@@ -269,7 +276,8 @@ pub fn message_queue_instance() -> (
     policy: LogPolicy::Always,
     source: LogSource::Both,
   }))
-  .replace_env([("RUST_LOG".to_owned(), "serai_message_queue=trace,".to_owned())].into())
+  // Testing only: `info` for every target the other doesn't name, as the coordinator's
+  .replace_env([("RUST_LOG".to_owned(), "info,serai_message_queue=trace".to_owned())].into())
   .set_publish_all_ports(true);
   let variables = vec![
     ("COORDINATOR_KEY".to_owned(), hex::encode((Ristretto::generator() * coord_key).to_bytes())),
