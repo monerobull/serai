@@ -101,10 +101,12 @@ impl<D: 'static + Send + Db, S: ScannerFeed> ContinuallyRan for SlashReportSigne
           }
           Response::Signature { id, signature } => {
             assert_eq!(id, VariantSignId::SlashReport);
-            // Drain the channel
-            let slash_report = SlashReport::try_recv(&mut txn, self.session).unwrap();
-            // Send the signature
-            SignedSlashReport::send(&mut txn, self.session, &(slash_report, signature.into()));
+            // Drain the channel, and send the signature. The protocol isn't retired once it's
+            // signed, so it can complete again, with the channel already drained: the report is
+            // sent once, and a later signature is let go.
+            if let Some(slash_report) = SlashReport::try_recv(&mut txn, self.session) {
+              SignedSlashReport::send(&mut txn, self.session, &(slash_report, signature.into()));
+            }
           }
         }
 
